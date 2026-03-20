@@ -36,40 +36,103 @@ export const getPatientsByWard = async ({ body, set }: Context) => {
     }
 };
 
+// ฟังก์ชันสำหรับดึงข้อมูลผู้ป่วยตาม ward (จากตาราง admission_list)
+export const getPatientByward = async ({ params, set }: Context) => {
+    const { ward } = params as { ward: string };
+    try {
+        const sql = `
+            SELECT 
+                al.hn,
+                al.an,
+                al.patient_name,
+                DATE_ADD(al.reg_datetime, INTERVAL 543 YEAR) AS reg_datetime,
+                t.admission_type_name,
+                al.incharge_doctor,
+                s.name AS spclty_name,al.bedno 
+            FROM admission_list al 
+            LEFT JOIN spclty s ON s.spclty = al.spclty 
+            LEFT JOIN admission_types t ON t.admission_type_id = al.admission_type_id 
+            WHERE al.ward = ? AND al.status = '1' order BY al.bedno ASC
+        `;
+        const [rows] = await nurse.execute<RowDataPacket[]>(sql, [ward]);
+
+        return {
+            success: true,
+            data: rows.map(row => ({
+                ...row,
+                patient_name: row.patient_name ? sanitizeHTML(row.patient_name) : null,
+                incharge_doctor: row.incharge_doctor ? sanitizeHTML(row.incharge_doctor) : null,
+                spclty_name: row.spclty_name ? sanitizeHTML(row.spclty_name) : null,
+                admission_type_name: row.admission_type_name ? sanitizeHTML(row.admission_type_name) : null
+            }))
+        };
+    } catch (error) {
+        console.error('Get patient by ward error:', error);
+        set.status = 500;
+        return {
+            success: false,
+            message: 'Internal Server Error'
+        };
+    }
+};
+
 // ฟังก์ชันสำหรับลงทะเบียนผู้ป่วยใหม่
 export const registerPatient = async ({ body, set }: Context) => {
     const {
         an,
         hn,
         patient_name,
+        reg_datetime,
+        birth_date,
         ward,
         spclty,
         admission_type_id,
+        status,
+        serverity_level_id,
+        severity_level_id,
         incharge_doctor,
         gender,
-        bedno
+        bedno,
+        is_ventilator
     } = body as any;
 
     const connection = await nurse.getConnection();
     try {
         // --- (แนะนำ) ตรวจสอบว่า AN มีอยู่จริงในฐานข้อมูล HIS หรือไม่ ---
         const [existingPatient] = await his.execute<RowDataPacket[]>(
-            `SELECT an FROM ipt WHERE an = ?`,
+            `SELECT an, incharge_doctor FROM ipt WHERE an = ?`,
             [an]
         );
         if (existingPatient.length === 0) {
             set.status = 404;
             return { success: false, message: `Patient with AN '${an}' not found in the main system.` };
         }
+        
+        const finalInchargeDoctor = incharge_doctor || existingPatient[0].incharge_doctor || null;
         // ---------------------------------------------------------
 
         await connection.beginTransaction();
 
         // 1. เพิ่มข้อมูลลงในตาราง admission_list
         const [result] = await connection.execute(
-            `INSERT INTO admission_list (an, hn, patient_name, reg_datetime, ward, spclty, admission_type_id, status, incharge_doctor, gender, bedno) 
-             VALUES (?, ?, ?, NOW(), ?, ?, ?, 'A', ?, ?, ?)`,
-            [an, hn, patient_name, ward, spclty, admission_type_id, incharge_doctor, gender, bedno]
+            `INSERT INTO admission_list (an, hn, patient_name, reg_datetime, birth_date, ward, spclty, admission_type_id, status, severity_level_id, incharge_doctor, gender, bedno, is_ventilator, discharge_type_id) 
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+            [
+                an, 
+                hn, 
+                patient_name, 
+                reg_datetime, 
+                birth_date ?? null,
+                ward, 
+                spclty ?? null, 
+                admission_type_id ?? 0, 
+                status ?? 'A', 
+                severity_level_id ?? serverity_level_id ?? null, 
+                finalInchargeDoctor ?? null, 
+                gender ?? '', 
+                bedno ?? null, 
+                is_ventilator ?? 'N'
+            ]
         );
 
         await connection.commit();
@@ -93,7 +156,7 @@ export const registerPatient = async ({ body, set }: Context) => {
             data: {
                 ...registeredPatient,
                 patient_name: sanitizeHTML(registeredPatient.patient_name),
-                incharge_doctor: sanitizeHTML(registeredPatient.incharge_doctor)
+                incharge_doctor: registeredPatient.incharge_doctor ? sanitizeHTML(registeredPatient.incharge_doctor) : null
             }
         };
 
@@ -116,7 +179,7 @@ export const getPatientsBYAN = async ({ body, set }: Context) => {
     try {
         const [rows] = await his.execute<RowDataPacket[]>(
             `select i.an,i.hn,i.dchstts,CONCAT(p.pname,p.fname,' ',p.lname)as ptname  
-            ,i.regdate,i.regtime,p.birthday,p.sex,a.bedno ,d.name  as doctor_name,i.ward
+            ,i.regdate,i.regtime,p.birthday,p.sex,a.bedno ,d.name  as doctor_name,i.ward,p.sex as gender
             from ipt i 
             left join patient p on p.hn=i.hn
             LEFT join iptadm a on a.an=i.an

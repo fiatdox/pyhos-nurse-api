@@ -147,6 +147,28 @@ export const getIpdPatientHistoryDaily = async ({ body, set }: Context) => {
     }
 };
 
+// ฟังก์ชันสำหรับดึงข้อมูลรายละเอียด Lab (RTF) ตาม lab_order_number
+export const getLabno = async ({ params, set }: Context) => {
+    const { id } = params as { id: string };
+
+    try {
+        const sql = `SELECT lab_order_number, result_rtf FROM lab_head WHERE lab_order_number = ?`;
+        const [rows] = await his.execute<RowDataPacket[]>(sql, [id]);
+
+        return {
+            success: true,
+            data: rows
+        };
+    } catch (error) {
+        console.error('Get labno error:', error);
+        set.status = 500;
+        return {
+            success: false,
+            message: 'Internal Server Error'
+        };
+    }
+};
+
 // ฟังก์ชันสำหรับดึงข้อมูลการติดตามผู้ป่วยหลังผ่าตัด (Operation Followup)
 export const operationFollowup = async ({ body, set }: Context) => {
     const { date1, date2 } = body as { date1: string; date2: string };
