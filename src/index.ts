@@ -5,6 +5,7 @@ import { protectedRoutes } from './routes/protectedRoutes';
 import { patientRoutes } from './routes/patientRoutes';
 import { nutritionRoutes } from './routes/nutritionRoutes';
 import { SystemRoutes } from './routes/systemRoutes'; //ข้อมูลพื้นฐาน เช่น หอผู้ป่วย
+import { nurseRoutes } from './routes/nurseRoutes';
 import { icRoutes } from './routes/icRoutes';
 
 // Import middlewares
@@ -27,6 +28,7 @@ const app = new Elysia()
     .use(patientRoutes)
     .use(nutritionRoutes)
     .use(SystemRoutes)
+    .use(nurseRoutes)
     .use(icRoutes)
     .listen(3000);
 

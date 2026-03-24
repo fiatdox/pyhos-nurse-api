@@ -9,7 +9,7 @@ export const getPatientsByWard = async ({ body, set }: Context) => {
     try {
         const [rows] = await his.execute<RowDataPacket[]>(
             `select i.an,i.hn,i.dchstts,CONCAT(p.pname,p.fname,' ',p.lname)as ptname  
-            ,i.regdate,i.regtime,p.birthday,p.sex,a.bedno ,d.name  as doctor_name,i.ward
+            ,concat(i.regdate,' ',i.regtime) as regdate,p.birthday,p.sex,a.bedno ,d.name  as doctor_name,i.ward
             from ipt i 
             left join patient p on p.hn=i.hn
             LEFT join iptadm a on a.an=i.an
@@ -93,7 +93,8 @@ export const registerPatient = async ({ body, set }: Context) => {
         incharge_doctor,
         gender,
         bedno,
-        is_ventilator
+        is_ventilator,
+        admission_change_shift_type_id
     } = body as any;
 
     const connection = await nurse.getConnection();
@@ -135,11 +136,35 @@ export const registerPatient = async ({ body, set }: Context) => {
             ]
         );
 
-        await connection.commit();
-
         const insertedId = (result as any).insertId;
 
-        // 2. ดึงข้อมูลผู้ป่วยที่เพิ่งลงทะเบียนเพื่อส่งกลับไป
+        // 2. เพิ่มข้อมูลลงในตาราง admission_change_shift ทันทีเพื่อเชื่อมโยงข้อมูล
+        const regDateObj = reg_datetime ? new Date(reg_datetime) : new Date();
+        const shift_date = !isNaN(regDateObj.getTime()) 
+            ? regDateObj.toISOString().split('T')[0] 
+            : new Date().toISOString().split('T')[0];
+            
+        const shift_type_id = admission_change_shift_type_id || 1; // ค่าเริ่มต้นประเภทเวรเป็น 1
+        const finalSeverity = severity_level_id ?? serverity_level_id ?? null;
+
+        await connection.execute(
+            `INSERT INTO admission_change_shift (
+                admission_list_id, 
+                admission_change_shift_type_id, 
+                an, 
+                hn, 
+                ward, 
+                shift_date, 
+                severity_level_id, 
+                ventilator_use, 
+                create_datetime
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+            [insertedId, shift_type_id, an, hn, ward, shift_date, finalSeverity, is_ventilator ?? 'N']
+        );
+
+        await connection.commit();
+
+        // 3. ดึงข้อมูลผู้ป่วยที่เพิ่งลงทะเบียนเพื่อส่งกลับไป
         const [rows] = await connection.execute<RowDataPacket[]>(
             `SELECT * FROM admission_list WHERE admission_list_id = ?`,
             [insertedId]
@@ -179,7 +204,7 @@ export const getPatientsBYAN = async ({ body, set }: Context) => {
     try {
         const [rows] = await his.execute<RowDataPacket[]>(
             `select i.an,i.hn,i.dchstts,CONCAT(p.pname,p.fname,' ',p.lname)as ptname  
-            ,i.regdate,i.regtime,p.birthday,p.sex,a.bedno ,d.name  as doctor_name,i.ward,p.sex as gender
+            ,concat(i.regdate,' ',i.regtime)as regdate,p.birthday,p.sex,a.bedno ,d.name  as doctor_name,i.ward,p.sex as gender
             from ipt i 
             left join patient p on p.hn=i.hn
             LEFT join iptadm a on a.an=i.an
@@ -288,5 +313,138 @@ export const savePatientsInShift = async ({ body, set }: { body: any[], set: any
         };
     } finally {
         connection.release();
+    }
+};
+
+// ฟังก์ชันสำหรับดึงข้อมูลผู้ป่วยที่ลงทะเบียนตาม ward พร้อมข้อมูลเวร (Shift Records)
+export const getPatientsRegisterByWard = async ({ params, set }: Context) => {
+    const { ward } = params as { ward: string };
+
+    try {
+        // 1. ดึงข้อมูลผู้ป่วยจาก admission_list
+        const [patients] = await nurse.execute<RowDataPacket[]>(
+            `SELECT 
+                al.admission_list_id,
+                al.hn,
+                al.an,
+                al.patient_name AS name,
+                TIMESTAMPDIFF(YEAR, al.birth_date, CURDATE()) AS age,
+                al.ward,
+                al.bedno AS bed,
+                al.reg_datetime,
+                s.name AS spcltyName,
+                al.incharge_doctor
+            FROM admission_list al
+            LEFT JOIN spclty s ON s.spclty = al.spclty
+            WHERE al.ward = ? AND al.status IN ('1', 'A')
+            ORDER BY al.bedno ASC`,
+            [ward]
+        );
+
+        if (patients.length === 0) {
+            return { success: true, data: [] };
+        }
+
+        // 2. ดึงข้อมูล wardName จาก HIS
+        const [wardData] = await his.execute<RowDataPacket[]>(
+            `SELECT name FROM ward WHERE ward = ?`,
+            [ward]
+        );
+        const wardName = wardData.length > 0 ? wardData[0].name : ward;
+
+        // 3. ดึงข้อมูล doctorName จาก HIS
+        const doctorCodes = [...new Set(patients.map(p => p.incharge_doctor).filter(Boolean))];
+        let doctorMap: Record<string, string> = {};
+        if (doctorCodes.length > 0) {
+            const placeholders = doctorCodes.map(() => '?').join(',');
+            const [doctors] = await his.execute<RowDataPacket[]>(
+                `SELECT code, name FROM doctor WHERE code IN (${placeholders})`,
+                doctorCodes
+            );
+            doctors.forEach(d => {
+                doctorMap[d.code] = d.name;
+            });
+        }
+
+        // 4. ดึงข้อมูล Shift Records
+        const ans = patients.map(p => p.an);
+        let shiftsMap: Record<string, any[]> = {};
+        if (ans.length > 0) {
+            const placeholders = ans.map(() => '?').join(',');
+            const [shifts] = await nurse.execute<RowDataPacket[]>(
+                `SELECT 
+                    an,
+                    shift_date,
+                    admission_change_shift_type_id AS shiftId,
+                    ventilator_use,
+                    severity_level_id AS severityLevel
+                FROM admission_change_shift
+                WHERE an IN (${placeholders})
+                ORDER BY shift_date ASC, admission_change_shift_type_id ASC`,
+                ans
+            );
+
+            shifts.forEach(shift => {
+                if (!shiftsMap[shift.an]) shiftsMap[shift.an] = [];
+                
+                const sDate = new Date(shift.shift_date);
+                let formattedDate = null;
+                if (!isNaN(sDate.getTime())) {
+                    const pad = (n: number) => n.toString().padStart(2, '0');
+                    formattedDate = `${pad(sDate.getDate())}/${pad(sDate.getMonth() + 1)}/${sDate.getFullYear()}`;
+                } else {
+                    formattedDate = shift.shift_date; // fallback กรณี parse date ไม่ได้
+                }
+
+                shiftsMap[shift.an].push({
+                    date: formattedDate,
+                    shiftId: shift.shiftId !== null ? Number(shift.shiftId) : null,
+                    isVentilator: shift.ventilator_use === 'Y' || shift.ventilator_use === '1' || shift.ventilator_use === true,
+                    severityLevel: shift.severityLevel !== null ? Number(shift.severityLevel) : null
+                });
+            });
+        }
+
+        // 5. ประกอบข้อมูลเป็น JSON Format ตามโครงสร้างที่ต้องการ
+        const data = patients.map(p => {
+            const regDate = p.reg_datetime ? new Date(p.reg_datetime) : null;
+            let admitDate = null;
+            let admitDateTimeIso = null;
+
+            if (regDate && !isNaN(regDate.getTime())) {
+                const pad = (n: number) => n.toString().padStart(2, '0');
+                admitDate = `${pad(regDate.getDate())}/${pad(regDate.getMonth() + 1)}/${regDate.getFullYear()}`;
+                admitDateTimeIso = `${regDate.getFullYear()}-${pad(regDate.getMonth() + 1)}-${pad(regDate.getDate())}T${pad(regDate.getHours())}:${pad(regDate.getMinutes())}:${pad(regDate.getSeconds())}`;
+            }
+
+            return {
+                admission_list_id: p.admission_list_id,
+                hn: p.hn,
+                an: p.an,
+                name: p.name ? sanitizeHTML(p.name) : null,
+                age: p.age !== null ? Number(p.age) : null,
+                ward: p.ward,
+                wardName: wardName ? sanitizeHTML(wardName) : p.ward,
+                bed: p.bed,
+                admitDate,
+                admitDateTimeIso,
+                spcltyName: p.spcltyName ? sanitizeHTML(p.spcltyName) : null,
+                doctorName: p.incharge_doctor && doctorMap[p.incharge_doctor] ? sanitizeHTML(doctorMap[p.incharge_doctor]) : (p.incharge_doctor || null),
+                shiftRecords: shiftsMap[p.an] || []
+            };
+        });
+
+        return {
+            success: true,
+            data
+        };
+
+    } catch (error) {
+        console.error('Get patients register by ward error:', error);
+        set.status = 500;
+        return {
+            success: false,
+            message: 'Internal Server Error'
+        };
     }
 };

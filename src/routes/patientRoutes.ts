@@ -1,6 +1,6 @@
 import { Elysia, t } from 'elysia';
 import { authMiddleware } from '../middlewares/authMiddleware';
-import { getPatientsByWard, getPatientsBYAN, registerPatient, savePatientsInShift, getPatientByward } from '../controllers/patientController';
+import { getPatientsByWard, getPatientsBYAN, registerPatient, savePatientsInShift, getPatientByward, getPatientsRegisterByWard } from '../controllers/patientController';
 
 export const patientRoutes = new Elysia({ prefix: '/api/v1' })
     .use(authMiddleware)
@@ -10,6 +10,11 @@ export const patientRoutes = new Elysia({ prefix: '/api/v1' })
         })
     })
     .get('/view-patient-by-ward/:ward', getPatientByward, {
+        params: t.Object({
+            ward: t.String()
+        })
+    })
+    .get('/patients-register-by-ward/:ward', getPatientsRegisterByWard, {
         params: t.Object({
             ward: t.String()
         })
@@ -35,7 +40,8 @@ export const patientRoutes = new Elysia({ prefix: '/api/v1' })
             incharge_doctor: t.Optional(t.String()),
             gender: t.Optional(t.Union([t.String(), t.Null()])),
             bedno: t.Optional(t.Union([t.String(), t.Null()])),
-            is_ventilator: t.Optional(t.String())
+            is_ventilator: t.Optional(t.String()),
+            admission_change_shift_type_id: t.Optional(t.Union([t.Number(), t.String(), t.Null()]))
         })
     })
     .post('/save-patients-in-shift', savePatientsInShift, {
