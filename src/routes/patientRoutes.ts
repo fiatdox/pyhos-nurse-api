@@ -1,6 +1,6 @@
 import { Elysia, t } from 'elysia';
 import { authMiddleware } from '../middlewares/authMiddleware';
-import { getPatientsByWard, getPatientsBYAN, registerPatient, savePatientsInShift, getPatientByward, getPatientsRegisterByWard } from '../controllers/patientController';
+import { getPatientsByWard, getPatientsBYAN, registerPatient, savePatientsInShift, getPatientByward, getPatientsRegisterByWard, saveShiftAssessment, getShiftAssessment } from '../controllers/patientController';
 
 export const patientRoutes = new Elysia({ prefix: '/api/v1' })
     .use(authMiddleware)
@@ -41,7 +41,40 @@ export const patientRoutes = new Elysia({ prefix: '/api/v1' })
             gender: t.Optional(t.Union([t.String(), t.Null()])),
             bedno: t.Optional(t.Union([t.String(), t.Null()])),
             is_ventilator: t.Optional(t.String()),
-            admission_change_shift_type_id: t.Optional(t.Union([t.Number(), t.String(), t.Null()]))
+            admission_change_shift_type_id: t.Optional(t.Union([t.Number(), t.String(), t.Null()])),
+            before_ward: t.Optional(t.Union([t.String(), t.Null()])),         // ✅ varchar(10)
+            oxygen_support_type: t.Optional(t.Union([t.Number(), t.Null()])), // ✅ tinyint(4)
+        })
+    })
+    .post('/get-shift-assessment', getShiftAssessment, {
+        body: t.Object({
+            admission_list_id: t.Number(),
+            shift_date: t.String(),
+            admission_change_shift_type_id: t.Number(),
+            ward: t.String(),
+        })
+    })
+    .post('/save-shift-assessment', saveShiftAssessment, {
+        body: t.Object({
+            admission_list_id: t.Number(),
+            admission_change_shift_type_id: t.Number(),
+            an: t.String(),
+            hn: t.String(),
+            ward: t.String(),
+            shift_date: t.String(),
+            staff: t.Optional(t.Union([t.String(), t.Null()])),
+            severity_level_id: t.Number(),
+            ventilator_use: t.Optional(t.Union([t.String(), t.Null()])),
+            level_of_care: t.Optional(t.Union([t.Number(), t.Null()])),
+            pain_score: t.Optional(t.Union([t.Number(), t.Null()])),
+            fall_risk: t.Optional(t.Union([t.Number(), t.Null()])),
+            pressure_sore_risk: t.Optional(t.Union([t.Number(), t.Null()])),
+            gcs_eye: t.Optional(t.Union([t.Number(), t.Null()])),
+            gcs_verbal: t.Optional(t.Union([t.Number(), t.Null()])),
+            gcs_motor: t.Optional(t.Union([t.Number(), t.Null()])),
+            oxygen_support_type_id: t.Optional(t.Union([t.Number(), t.Null()])),
+            safety_precautions: t.Optional(t.Union([t.Array(t.String()), t.Null()])),
+            comment: t.Optional(t.Union([t.String(), t.Null()])),
         })
     })
     .post('/save-patients-in-shift', savePatientsInShift, {
@@ -59,4 +92,3 @@ export const patientRoutes = new Elysia({ prefix: '/api/v1' })
         }))
     });
 
-    

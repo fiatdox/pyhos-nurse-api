@@ -11,8 +11,10 @@ import { icRoutes } from './routes/icRoutes';
 // Import middlewares
 import { securityMiddleware } from './middlewares/securityMiddleware';
 import { loggerMiddleware } from './middlewares/loggerMiddleware';
+import { corsMiddleware } from './middlewares/corsMiddleware';
 
 const app = new Elysia()
+    .use(corsMiddleware)
     .use(loggerMiddleware)
     .use(rateLimit({
         duration: 60000, // 1 นาที (หน่วยเป็น milliseconds)

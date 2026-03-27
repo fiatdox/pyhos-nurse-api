@@ -25,6 +25,28 @@ export const getWards = async ({ set }: Context) => {
     }
 };
 
+// ฟังก์ชั่นแสดงรายชื่อหอผู้ป่วย
+export const getWardsV1 = async ({ set }: Context) => {
+    try {
+        const [rows] = await nurse.execute<RowDataPacket[]>(`SELECT ward,ward_name,his_code,is_labor_room,is_active FROM ward where is_active='Y' order by ward_name desc`);
+        return {
+            success: true,
+            // ป้องกันการโจมตีแบบ XSS โดยการลบแท็ก HTML ออกจากชื่อหอผู้ป่วย
+            data: rows.map(row => ({
+                ...row,
+                ward_name: sanitizeHTML(row.ward_name)
+            }))
+        };
+    } catch (error) {
+        console.error('Get wards error:', error);
+        set.status = 500;
+        return {
+            success: false,
+            message: 'Internal Server Error'
+        };
+    }
+};
+
 export const getSpclty = async ({ set }: Context) => {
     try {
         const [rows] = await nurse.execute<RowDataPacket[]>(`select spclty,name from spclty  where is_active='Y' `);   

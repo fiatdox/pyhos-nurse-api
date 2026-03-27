@@ -1,11 +1,55 @@
 import { Elysia } from 'elysia';
-import { appendFile, mkdir } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { appendFile, mkdir, unlink, readdir } from 'node:fs/promises';
+import { join } from 'node:path';
 
-const LOG_FILE_PATH = 'logs/access.log';
+const LOG_DIR = 'logs';
+const LOG_RETENTION_DAYS = 45; // ลบ logs ที่เก่ากว่า 45 วัน
+
+/**
+ * สร้างชื่อไฟล์ log ตามวันที่ (เช่น access-2026-03-27.log)
+ */
+const getLogFileName = (): string => {
+    const now = new Date();
+    const date = now.toISOString().split('T')[0]; // YYYY-MM-DD
+    return join(LOG_DIR, `access-${date}.log`);
+};
+
+/**
+ * ลบ log files ที่เก่ากว่า 45 วัน
+ */
+const cleanupOldLogs = async () => {
+    try {
+        const files = await readdir(LOG_DIR);
+        const now = Date.now();
+        const cutoffTime = now - LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+
+        for (const file of files) {
+            if (!file.startsWith('access-') || !file.endsWith('.log')) continue;
+
+            // Extract date from filename: access-2026-03-27.log
+            const dateMatch = file.match(/access-(\d{4}-\d{2}-\d{2})\.log/);
+            if (!dateMatch) continue;
+
+            const fileDate = new Date(dateMatch[1]);
+            if (fileDate.getTime() < cutoffTime) {
+                const filePath = join(LOG_DIR, file);
+                await unlink(filePath);
+                console.log(`🗑️ ลบ log เก่า: ${file}`);
+            }
+        }
+    } catch (error) {
+        console.error('Error cleaning up old logs:', error);
+    }
+};
+
+// เรียก cleanup เมื่อแอปเริ่มต้น
+cleanupOldLogs();
+
+// เรียก cleanup ทุก 24 ชั่วโมง
+setInterval(cleanupOldLogs, 24 * 60 * 60 * 1000);
 
 // สร้างโฟลเดอร์สำหรับเก็บ Log ถ้ายังไม่มี
-await mkdir(dirname(LOG_FILE_PATH), { recursive: true }).catch(() => {});
+await mkdir(LOG_DIR, { recursive: true }).catch(() => {});
 
 const colorMethod = (method: string) => {
     switch (method) {
@@ -73,7 +117,8 @@ export const loggerMiddleware = (app: Elysia) =>
             const fileLogMessage = `${timestamp} | ${clientIP.padEnd(15)} | ${userId.padEnd(10)} | ${method.padEnd(6)} | ${fullPath.padEnd(30)} | ${`${duration}ms`.padEnd(8)} | ${status} | "${referer}" | "${userAgent}"\n`;
 
             try {
-                await appendFile(LOG_FILE_PATH, fileLogMessage);
+                const logFile = getLogFileName();
+                await appendFile(logFile, fileLogMessage);
             } catch (error) {
                 console.error('Error writing to log file:', error);
             }

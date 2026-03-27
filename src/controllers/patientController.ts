@@ -94,12 +94,14 @@ export const registerPatient = async ({ body, set }: Context) => {
         gender,
         bedno,
         is_ventilator,
-        admission_change_shift_type_id
+        admission_change_shift_type_id,
+        before_ward,           // ✅ ward ต้นทาง (กรณีรับย้าย)
+        oxygen_support_type,   // ✅ 1=room_air, 2=oxygen, 3=hfnc, null=ใส่เครื่อง/C/S
     } = body as any;
 
     const connection = await nurse.getConnection();
     try {
-        // --- (แนะนำ) ตรวจสอบว่า AN มีอยู่จริงในฐานข้อมูล HIS หรือไม่ ---
+        // --- ตรวจสอบว่า AN มีอยู่จริงในฐานข้อมูล HIS ---
         const [existingPatient] = await his.execute<RowDataPacket[]>(
             `SELECT an, incharge_doctor FROM ipt WHERE an = ?`,
             [an]
@@ -108,55 +110,61 @@ export const registerPatient = async ({ body, set }: Context) => {
             set.status = 404;
             return { success: false, message: `Patient with AN '${an}' not found in the main system.` };
         }
-        
+
         const finalInchargeDoctor = incharge_doctor || existingPatient[0].incharge_doctor || null;
-        // ---------------------------------------------------------
 
         await connection.beginTransaction();
 
         // 1. เพิ่มข้อมูลลงในตาราง admission_list
         const [result] = await connection.execute(
-            `INSERT INTO admission_list (an, hn, patient_name, reg_datetime, birth_date, ward, spclty, admission_type_id, status, severity_level_id, incharge_doctor, gender, bedno, is_ventilator, discharge_type_id) 
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+            `INSERT INTO admission_list (
+                an, hn, patient_name, reg_datetime, birth_date,
+                ward, spclty, admission_type_id, status, severity_level_id,
+                incharge_doctor, gender, bedno, is_ventilator,
+                before_ward, oxygen_support_type_id,
+                discharge_type_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
             [
-                an, 
-                hn, 
-                patient_name, 
-                reg_datetime, 
+                an,
+                hn,
+                patient_name,
+                reg_datetime,
                 birth_date ?? null,
-                ward, 
-                spclty ?? null, 
-                admission_type_id ?? 0, 
-                status ?? 'A', 
-                severity_level_id ?? serverity_level_id ?? null, 
-                finalInchargeDoctor ?? null, 
-                gender ?? '', 
-                bedno ?? null, 
-                is_ventilator ?? 'N'
+                ward,
+                spclty ?? null,
+                admission_type_id ?? 0,
+                status ?? 'A',
+                severity_level_id ?? serverity_level_id ?? null,
+                finalInchargeDoctor ?? null,
+                gender ?? '',
+                bedno ?? null,
+                is_ventilator ?? 'N',
+                before_ward ?? null,                                    // ✅ varchar(10)
+                is_ventilator === 'N' ? (oxygen_support_type ?? null) : null, // ✅ tinyint(4)
             ]
         );
 
         const insertedId = (result as any).insertId;
 
-        // 2. เพิ่มข้อมูลลงในตาราง admission_change_shift ทันทีเพื่อเชื่อมโยงข้อมูล
+        // 2. เพิ่มข้อมูลลงในตาราง admission_change_shift
         const regDateObj = reg_datetime ? new Date(reg_datetime) : new Date();
-        const shift_date = !isNaN(regDateObj.getTime()) 
-            ? regDateObj.toISOString().split('T')[0] 
+        const shift_date = !isNaN(regDateObj.getTime())
+            ? regDateObj.toISOString().split('T')[0]
             : new Date().toISOString().split('T')[0];
-            
-        const shift_type_id = admission_change_shift_type_id || 1; // ค่าเริ่มต้นประเภทเวรเป็น 1
+
+        const shift_type_id = admission_change_shift_type_id || 1;
         const finalSeverity = severity_level_id ?? serverity_level_id ?? null;
 
         await connection.execute(
             `INSERT INTO admission_change_shift (
-                admission_list_id, 
-                admission_change_shift_type_id, 
-                an, 
-                hn, 
-                ward, 
-                shift_date, 
-                severity_level_id, 
-                ventilator_use, 
+                admission_list_id,
+                admission_change_shift_type_id,
+                an,
+                hn,
+                ward,
+                shift_date,
+                severity_level_id,
+                ventilator_use,
                 create_datetime
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
             [insertedId, shift_type_id, an, hn, ward, shift_date, finalSeverity, is_ventilator ?? 'N']
@@ -164,7 +172,7 @@ export const registerPatient = async ({ body, set }: Context) => {
 
         await connection.commit();
 
-        // 3. ดึงข้อมูลผู้ป่วยที่เพิ่งลงทะเบียนเพื่อส่งกลับไป
+        // 3. ดึงข้อมูลผู้ป่วยที่เพิ่งลงทะเบียนเพื่อส่งกลับ
         const [rows] = await connection.execute<RowDataPacket[]>(
             `SELECT * FROM admission_list WHERE admission_list_id = ?`,
             [insertedId]
@@ -181,8 +189,10 @@ export const registerPatient = async ({ body, set }: Context) => {
             data: {
                 ...registeredPatient,
                 patient_name: sanitizeHTML(registeredPatient.patient_name),
-                incharge_doctor: registeredPatient.incharge_doctor ? sanitizeHTML(registeredPatient.incharge_doctor) : null
-            }
+                incharge_doctor: registeredPatient.incharge_doctor
+                    ? sanitizeHTML(registeredPatient.incharge_doctor)
+                    : null,
+            },
         };
 
     } catch (error) {
@@ -191,12 +201,132 @@ export const registerPatient = async ({ body, set }: Context) => {
         set.status = 500;
         return {
             success: false,
-            message: 'Internal Server Error during patient registration.'
+            message: 'Internal Server Error during patient registration.',
         };
     } finally {
         connection.release();
-    };
+    }
 };
+// export const registerPatient = async ({ body, set }: Context) => {
+//     const {
+//         an,
+//         hn,
+//         patient_name,
+//         reg_datetime,
+//         birth_date,
+//         ward,
+//         spclty,
+//         admission_type_id,
+//         status,
+//         serverity_level_id,
+//         severity_level_id,
+//         incharge_doctor,
+//         gender,
+//         bedno,
+//         is_ventilator,
+//         admission_change_shift_type_id
+//     } = body as any;
+
+//     const connection = await nurse.getConnection();
+//     try {
+//         // --- (แนะนำ) ตรวจสอบว่า AN มีอยู่จริงในฐานข้อมูล HIS หรือไม่ ---
+//         const [existingPatient] = await his.execute<RowDataPacket[]>(
+//             `SELECT an, incharge_doctor FROM ipt WHERE an = ?`,
+//             [an]
+//         );
+//         if (existingPatient.length === 0) {
+//             set.status = 404;
+//             return { success: false, message: `Patient with AN '${an}' not found in the main system.` };
+//         }
+        
+//         const finalInchargeDoctor = incharge_doctor || existingPatient[0].incharge_doctor || null;
+//         // ---------------------------------------------------------
+
+//         await connection.beginTransaction();
+
+//         // 1. เพิ่มข้อมูลลงในตาราง admission_list
+//         const [result] = await connection.execute(
+//             `INSERT INTO admission_list (an, hn, patient_name, reg_datetime, birth_date, ward, spclty, admission_type_id, status, severity_level_id, incharge_doctor, gender, bedno, is_ventilator, discharge_type_id) 
+//              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+//             [
+//                 an, 
+//                 hn, 
+//                 patient_name, 
+//                 reg_datetime, 
+//                 birth_date ?? null,
+//                 ward, 
+//                 spclty ?? null, 
+//                 admission_type_id ?? 0, 
+//                 status ?? 'A', 
+//                 severity_level_id ?? serverity_level_id ?? null, 
+//                 finalInchargeDoctor ?? null, 
+//                 gender ?? '', 
+//                 bedno ?? null, 
+//                 is_ventilator ?? 'N'
+//             ]
+//         );
+
+//         const insertedId = (result as any).insertId;
+
+//         // 2. เพิ่มข้อมูลลงในตาราง admission_change_shift ทันทีเพื่อเชื่อมโยงข้อมูล
+//         const regDateObj = reg_datetime ? new Date(reg_datetime) : new Date();
+//         const shift_date = !isNaN(regDateObj.getTime()) 
+//             ? regDateObj.toISOString().split('T')[0] 
+//             : new Date().toISOString().split('T')[0];
+            
+//         const shift_type_id = admission_change_shift_type_id || 1; // ค่าเริ่มต้นประเภทเวรเป็น 1
+//         const finalSeverity = severity_level_id ?? serverity_level_id ?? null;
+
+//         await connection.execute(
+//             `INSERT INTO admission_change_shift (
+//                 admission_list_id, 
+//                 admission_change_shift_type_id, 
+//                 an, 
+//                 hn, 
+//                 ward, 
+//                 shift_date, 
+//                 severity_level_id, 
+//                 ventilator_use, 
+//                 create_datetime
+//             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+//             [insertedId, shift_type_id, an, hn, ward, shift_date, finalSeverity, is_ventilator ?? 'N']
+//         );
+
+//         await connection.commit();
+
+//         // 3. ดึงข้อมูลผู้ป่วยที่เพิ่งลงทะเบียนเพื่อส่งกลับไป
+//         const [rows] = await connection.execute<RowDataPacket[]>(
+//             `SELECT * FROM admission_list WHERE admission_list_id = ?`,
+//             [insertedId]
+//         );
+
+//         if (rows.length === 0) {
+//             throw new Error('Failed to retrieve patient details after registration.');
+//         }
+
+//         const registeredPatient = rows[0];
+//         return {
+//             success: true,
+//             message: 'Patient registered successfully.',
+//             data: {
+//                 ...registeredPatient,
+//                 patient_name: sanitizeHTML(registeredPatient.patient_name),
+//                 incharge_doctor: registeredPatient.incharge_doctor ? sanitizeHTML(registeredPatient.incharge_doctor) : null
+//             }
+//         };
+
+//     } catch (error) {
+//         await connection.rollback();
+//         console.error('Register patient error:', error);
+//         set.status = 500;
+//         return {
+//             success: false,
+//             message: 'Internal Server Error during patient registration.'
+//         };
+//     } finally {
+//         connection.release();
+//     };
+// };
 
 // ฟังก์ชันสำหรับดึงข้อมูลผู้ป่วยตาม AN
 export const getPatientsBYAN = async ({ body, set }: Context) => {
@@ -313,6 +443,155 @@ export const savePatientsInShift = async ({ body, set }: { body: any[], set: any
         };
     } finally {
         connection.release();
+    }
+};
+
+// ฟังก์ชันบันทึกข้อมูลอาการผู้ป่วยรายเวร (Shift Assessment)
+export const saveShiftAssessment = async ({ body, set }: Context) => {
+    const {
+        admission_list_id,
+        admission_change_shift_type_id,
+        an,
+        hn,
+        ward,
+        shift_date,
+        staff,
+        severity_level_id,
+        ventilator_use,
+        level_of_care,
+        pain_score,
+        fall_risk,
+        pressure_sore_risk,
+        gcs_eye,
+        gcs_verbal,
+        gcs_motor,
+        oxygen_support_type_id,
+        safety_precautions,
+        comment,
+    } = body as any;
+
+    // แปลง optional fields ให้เป็น null ทั้งหมดเพื่อป้องกัน undefined
+    const safeStaff = staff ?? null;
+    const safeVentilatorUse = ventilator_use ?? null;
+    const safeLevelOfCare = level_of_care ?? null;
+    const safePainScore = pain_score ?? null;
+    const safeFallRisk = fall_risk ?? null;
+    const safePressureSoreRisk = pressure_sore_risk ?? null;
+    const safeGcsEye = gcs_eye ?? null;
+    const safeGcsVerbal = gcs_verbal ?? null;
+    const safeGcsMotor = gcs_motor ?? null;
+    const safeOxygenSupportTypeId = oxygen_support_type_id ?? null;
+    const safeSafetyPrecautions = safety_precautions ? JSON.stringify(safety_precautions) : null;
+    const safeComment = comment ?? null;
+
+    try {
+        // ใช้ INSERT ... ON DUPLICATE KEY UPDATE ตาม UNIQUE KEY (admission_list_id, admission_change_shift_type_id)
+        // พร้อมเช็ค ward และ shift_date เพิ่มเติมตามที่ต้องการ
+        const [result] = await nurse.execute(
+            `INSERT INTO admission_change_shift (
+                admission_list_id, admission_change_shift_type_id,
+                an, hn, ward, shift_date, staff,
+                severity_level_id, ventilator_use,
+                level_of_care, pain_score, fall_risk, pressure_sore_risk,
+                gcs_eye, gcs_verbal, gcs_motor, oxygen_support_type_id,
+                safety_precautions, comment, create_datetime
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+            ON DUPLICATE KEY UPDATE
+                an = VALUES(an),
+                hn = VALUES(hn),
+                ward = VALUES(ward),
+                shift_date = VALUES(shift_date),
+                staff = VALUES(staff),
+                severity_level_id = VALUES(severity_level_id),
+                ventilator_use = VALUES(ventilator_use),
+                level_of_care = VALUES(level_of_care),
+                pain_score = VALUES(pain_score),
+                fall_risk = VALUES(fall_risk),
+                pressure_sore_risk = VALUES(pressure_sore_risk),
+                gcs_eye = VALUES(gcs_eye),
+                gcs_verbal = VALUES(gcs_verbal),
+                gcs_motor = VALUES(gcs_motor),
+                oxygen_support_type_id = VALUES(oxygen_support_type_id),
+                safety_precautions = VALUES(safety_precautions),
+                comment = VALUES(comment),
+                update_datetime = NOW(),
+                update_by = VALUES(staff)`,
+            [
+                admission_list_id, admission_change_shift_type_id,
+                an, hn, ward, shift_date, safeStaff,
+                severity_level_id, safeVentilatorUse,
+                safeLevelOfCare, safePainScore, safeFallRisk, safePressureSoreRisk,
+                safeGcsEye, safeGcsVerbal, safeGcsMotor, safeOxygenSupportTypeId,
+                safeSafetyPrecautions, safeComment
+            ]
+        );
+
+        const affectedRows = (result as any).affectedRows;
+        // affectedRows = 1 → INSERT ใหม่, affectedRows = 2 → UPDATE ข้อมูลเดิม
+        const action = affectedRows === 1 ? 'created' : 'updated';
+
+        return {
+            success: true,
+            message: action === 'created'
+                ? 'บันทึกข้อมูลอาการผู้ป่วยรายเวรเรียบร้อยแล้ว'
+                : 'อัพเดทข้อมูลอาการผู้ป่วยรายเวรเรียบร้อยแล้ว',
+            admission_change_shift_id: (result as any).insertId,
+            action
+        };
+    } catch (error) {
+        console.error('Save shift assessment error:', error);
+        set.status = 500;
+        return {
+            success: false,
+            message: 'เกิดข้อผิดพลาดในการบันทึกข้อมูลอาการผู้ป่วยรายเวร',
+            error: String(error)
+        };
+    }
+};
+
+// ฟังก์ชันดึงข้อมูลอาการผู้ป่วยรายเวร (Shift Assessment)
+export const getShiftAssessment = async ({ body, set }: Context) => {
+    const { admission_list_id, shift_date, admission_change_shift_type_id, ward } = body as {
+        admission_list_id: number;
+        shift_date: string;
+        admission_change_shift_type_id: number;
+        ward: string;
+    };
+
+    try {
+        const [rows] = await nurse.execute<RowDataPacket[]>(
+            `SELECT
+                admission_list_id, admission_change_shift_type_id, an, hn, ward, shift_date, staff,
+                severity_level_id, ventilator_use, level_of_care, pain_score, fall_risk, pressure_sore_risk,
+                gcs_eye, gcs_verbal, gcs_motor, oxygen_support_type_id,
+                safety_precautions, comment, create_datetime, update_datetime, update_by
+             FROM admission_change_shift
+             WHERE admission_list_id = ? AND DATE(shift_date) = DATE(?) AND admission_change_shift_type_id = ? AND ward = ?
+             LIMIT 1`,
+            [admission_list_id, shift_date, admission_change_shift_type_id, ward]
+        );
+
+        if (rows.length === 0) {
+            return { success: true, data: null };
+        }
+
+        const row = rows[0];
+        return {
+            success: true,
+            data: {
+                ...row,
+                safety_precautions: row.safety_precautions ? JSON.parse(row.safety_precautions) : null,
+                comment: row.comment ? sanitizeHTML(row.comment) : null,
+                staff: row.staff ? sanitizeHTML(row.staff) : null,
+            }
+        };
+    } catch (error) {
+        console.error('Get shift assessment error:', error);
+        set.status = 500;
+        return {
+            success: false,
+            message: 'เกิดข้อผิดพลาดในการดึงข้อมูลอาการผู้ป่วยรายเวร'
+        };
     }
 };
 

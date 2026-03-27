@@ -1,39 +1,21 @@
 import { Elysia, t } from 'elysia';
 import { authMiddleware } from '../middlewares/authMiddleware';
-import { getSpclty, getWards,getAdmissionType,getAdmissionSeverityLV,getAdmissionChangeShiftTypes, getAllStaff, addStaff, addWardStaffs, getWardStaffByWard, clearWardStaffsByWard } from '../controllers/systemController';
+import { getSpclty, getWards,getAdmissionType,getAdmissionSeverityLV,getAdmissionChangeShiftTypes, getAllStaff, addStaff, addWardStaffs, getWardStaffByWard, clearWardStaffsByWard, getWardsV1 } from '../controllers/systemController';
 
 export const SystemRoutes = new Elysia({ prefix: '/api/v1' })
     .use(authMiddleware)
     // เพิ่มเส้นทางสำหรับดึงข้อมูลหอผู้ป่วย
-    .get('/wards', getWards, {
-        body: t.Object({
-            ward: t.String()
-        })
-    })
+    .get('/wards', getWards)
+
+    .get('/wardsV1', getWardsV1)
     // เพิ่มเส้นทางสำหรับดึงแผนกการรักษา
-    .get('/spclty', getSpclty, {
-        body: t.Object({
-            spclty: t.String()
-        })
-    })
+    .get('/spclty', getSpclty)
     // เพิ่มเส้นทางสำหรับดึงข้อมูลประเภทการรับเข้าผู้ป่วย
-    .get('/admission-types', getAdmissionType, {
-        body: t.Object({
-            admission_type: t.String()
-        })
-    })
+    .get('/admission-types', getAdmissionType)
     // เพิ่มเส้นทางสำหรับดึงข้อมูลระดับความรุนแรงของการรับเข้าผู้ป่วย
-    .get('/admission-severity-levels', getAdmissionSeverityLV, {
-        body: t.Object({
-            severity_level: t.String()
-        })
-    })
+    .get('/admission-severity-levels', getAdmissionSeverityLV)
     // เพิ่มเส้นทางสำหรับดึงข้อมูลประเภทเวร
-    .get('/admission-change-shift-types', getAdmissionChangeShiftTypes, {
-        body: t.Object({
-            admission_change_shift_type: t.String()
-        })
-    })
+    .get('/admission-change-shift-types', getAdmissionChangeShiftTypes)
     // เพิ่มเส้นทางสำหรับดึงข้อมูลเจ้าหน้าที่ทั้งหมด
     .get('/staffs', getAllStaff)
     // เพิ่มเส้นทางสำหรับเพิ่มข้อมูลเจ้าหน้าที่
