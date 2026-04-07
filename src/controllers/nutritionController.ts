@@ -123,6 +123,167 @@ export const orderMenu = async ({ body, set }: { body: any[], set: any }) => {
     }
 };
 
+// ฟังก์ชันสำหรับดึงรายการอาหารของผู้ป่วยตาม ward และวันที่
+export const getFoodOrdersByWard = async ({ body, set }: { body: { ward: string, date: string }, set: any }) => {
+    const { ward, date } = body;
+
+    if (!ward || !date) {
+        set.status = 400;
+        return {
+            success: false,
+            message: 'กรุณาระบุ ward และ date'
+        };
+    }
+
+    try {
+        const [rows] = await nurse.execute<RowDataPacket[]>(
+            `SELECT
+                al.admission_list_id,
+                al.hn,
+                al.an,
+                al.patient_name,
+                al.bedno,
+                (
+                    SELECT fi.food_name
+                    FROM food_orders fo
+                    JOIN food_items fi ON fo.food_item_id = fi.food_item_id
+                    WHERE fo.an = al.an
+                    AND fo.order_date = ?
+                    AND fo.meal = 1
+                ) AS breakfast,
+                (
+                    SELECT fi.food_name
+                    FROM food_orders fo
+                    JOIN food_items fi ON fo.food_item_id = fi.food_item_id
+                    WHERE fo.an = al.an
+                    AND fo.order_date = ?
+                    AND fo.meal = 2
+                ) AS lunch,
+                (
+                    SELECT fi.food_name
+                    FROM food_orders fo
+                    JOIN food_items fi ON fo.food_item_id = fi.food_item_id
+                    WHERE fo.an = al.an
+                    AND fo.order_date = ?
+                    AND fo.meal = 3
+                ) AS dinner
+            FROM admission_list al
+            WHERE al.discharge_type_id = 0
+            AND al.ward = ?
+            ORDER BY al.bedno ASC`,
+            [date, date, date, ward]
+        );
+
+        return {
+            success: true,
+            data: rows.map(row => ({
+                ...row,
+                patient_name: sanitizeHTML(row.patient_name)
+            }))
+        };
+    } catch (error) {
+        console.error('Get food orders by ward error:', error);
+        set.status = 500;
+        return {
+            success: false,
+            message: 'Internal Server Error'
+        };
+    }
+};
+
+// ฟังก์ชันสำหรับดึงรายการอาหารตาม ward, date, meal (สำหรับ addon)
+export const getFoodOrdersAddonByWard = async ({ body, set }: { body: { ward: string, date: string, meal: number }, set: any }) => {
+    const { ward, date, meal } = body;
+
+    if (!ward || !date || !meal) {
+        set.status = 400;
+        return {
+            success: false,
+            message: 'กรุณาระบุ ward, date และ meal'
+        };
+    }
+
+    try {
+        const [rows] = await nurse.execute<RowDataPacket[]>(
+            `SELECT
+                fo.food_order_id,
+                fo.an,
+                fo.addon,
+                al.bedno,
+                al.patient_name,
+                m.name AS meal_name,
+                fi.food_name
+            FROM food_orders fo
+            JOIN admission_list al ON fo.an = al.an AND al.discharge_type_id = 0
+            JOIN food_items fi ON fo.food_item_id = fi.food_item_id
+            JOIN meal m ON fo.meal = m.meal
+            WHERE fo.ward = ?
+            AND fo.order_date = ?
+            AND fo.meal = ?
+            ORDER BY al.bedno ASC`,
+            [ward, date, meal]
+        );
+
+        return {
+            success: true,
+            data: rows.map(row => ({
+                ...row,
+                patient_name: sanitizeHTML(row.patient_name)
+            }))
+        };
+    } catch (error) {
+        console.error('Get food orders addon by ward error:', error);
+        set.status = 500;
+        return {
+            success: false,
+            message: 'Internal Server Error'
+        };
+    }
+};
+
+// ฟังก์ชันสำหรับ update addon ของรายการอาหารตาม ward, date, meal
+export const updateFoodOrderAddon = async ({ body, set }: { body: { ward: string, date: string, meal: number, orders: { food_order_id: number, addon?: string | null }[] }, set: any }) => {
+    const { ward, date, meal, orders } = body;
+
+    if (!ward || !date || !meal || !orders || orders.length === 0) {
+        set.status = 400;
+        return {
+            success: false,
+            message: 'กรุณาระบุ ward, date, meal และ orders'
+        };
+    }
+
+    const connection = await nurse.getConnection();
+
+    try {
+        await connection.beginTransaction();
+
+        for (const order of orders) {
+            await connection.execute(
+                `UPDATE food_orders SET addon = ? WHERE food_order_id = ? AND order_date = ? AND meal = ? AND ward = ?`,
+                [order.addon ?? null, order.food_order_id, date, meal, ward]
+            );
+        }
+
+        await connection.commit();
+
+        return {
+            success: true,
+            message: `อัปเดต addon เรียบร้อยแล้ว จำนวน ${orders.length} รายการ`
+        };
+    } catch (error) {
+        await connection.rollback();
+        console.error('Update food order addon error:', error);
+        set.status = 500;
+        return {
+            success: false,
+            message: 'Internal Server Error'
+        };
+    } finally {
+        connection.release();
+    }
+};
+
 // ฟังก์ชันสำหรับยกเลิกรายการอาหาร
 export const cancelOrderMenu = async ({ body, set }: { body: any[], set: any }) => {
     const orders = body;

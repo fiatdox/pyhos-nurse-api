@@ -36,12 +36,196 @@ export const getPatientsByWard = async ({ body, set }: Context) => {
     }
 };
 
+// ฟังก์ชันจำหน่ายผู้ป่วย (discharge / transfer / refer)
+export const dischargePatient = async ({ body, set }: Context) => {
+    const {
+        admission_list_id,
+        discharge_type_id,
+        discharge_datetime,
+        move_to_ward,
+        status,
+        los,
+    } = body as {
+        admission_list_id: number;
+        discharge_type_id: number;
+        discharge_datetime: string;
+        move_to_ward: string | null;
+        status: string;
+        los: number;
+    };
+
+    const connection = await nurse.getConnection();
+    try {
+        const [[existing], [dischargeType]] = await Promise.all([
+            connection.execute<RowDataPacket[]>(
+                `SELECT admission_list_id FROM admission_list WHERE admission_list_id = ? LIMIT 1`,
+                [admission_list_id]
+            ),
+            connection.execute<RowDataPacket[]>(
+                `SELECT discharge_type_name FROM discharge_types WHERE discharge_type_id = ? LIMIT 1`,
+                [discharge_type_id]
+            ),
+        ]);
+
+        if ((existing as RowDataPacket[]).length === 0) {
+            set.status = 404;
+            return { success: false, message: `ไม่พบข้อมูลผู้ป่วย admission_list_id: ${admission_list_id}` };
+        }
+
+        const typeLabel = (dischargeType as RowDataPacket[])[0]?.discharge_type_name ?? 'จำหน่ายผู้ป่วย';
+
+        await connection.beginTransaction();
+
+        await connection.execute(
+            `UPDATE admission_list SET
+                discharge_type_id = ?,
+                discharge_datetime = ?,
+                move_to_ward = ?,
+                status = ?,
+                los = ?
+             WHERE admission_list_id = ?`,
+            [discharge_type_id, discharge_datetime, move_to_ward ?? null, status, los, admission_list_id]
+        );
+
+        await connection.commit();
+
+        return {
+            success: true,
+            message: `${typeLabel}เรียบร้อยแล้ว`,
+            data: { admission_list_id, discharge_type_id, discharge_type_name: typeLabel, status, discharge_datetime, move_to_ward: move_to_ward ?? null, los }
+        };
+
+    } catch (error) {
+        await connection.rollback();
+        console.error('Discharge patient error:', error);
+        set.status = 500;
+        return { success: false, message: 'Internal Server Error during discharge.' };
+    } finally {
+        connection.release();
+    }
+};
+
+// ฟังก์ชันยกเลิกการจำหน่ายผู้ป่วย
+export const cancelDischarge = async ({ body, set }: Context) => {
+    const { admission_list_id } = body as { admission_list_id: number };
+
+    const connection = await nurse.getConnection();
+    try {
+        const [existing] = await connection.execute<RowDataPacket[]>(
+            `SELECT admission_list_id, status FROM admission_list WHERE admission_list_id = ? LIMIT 1`,
+            [admission_list_id]
+        );
+
+        if ((existing as RowDataPacket[]).length === 0) {
+            set.status = 404;
+            return { success: false, message: `ไม่พบข้อมูลผู้ป่วย admission_list_id: ${admission_list_id}` };
+        }
+
+        if ((existing as RowDataPacket[])[0].status === '1') {
+            set.status = 400;
+            return { success: false, message: 'ผู้ป่วยยังไม่ได้ถูกจำหน่าย' };
+        }
+
+        await connection.beginTransaction();
+
+        await connection.execute(
+            `UPDATE admission_list SET
+                status = '1',
+                discharge_type_id = 0,
+                discharge_datetime = NULL,
+                move_to_ward = NULL,
+                los = NULL
+             WHERE admission_list_id = ?`,
+            [admission_list_id]
+        );
+
+        await connection.commit();
+
+        return {
+            success: true,
+            message: 'ยกเลิกการจำหน่ายเรียบร้อยแล้ว',
+            data: { admission_list_id, status: '1' }
+        };
+
+    } catch (error) {
+        await connection.rollback();
+        console.error('Cancel discharge error:', error);
+        set.status = 500;
+        return { success: false, message: 'Internal Server Error during cancel discharge.' };
+    } finally {
+        connection.release();
+    }
+};
+
+// ฟังก์ชันดึงรายชื่อผู้ป่วยที่จำหน่ายแล้วตาม ward
+export const getPatientDischargeByWard = async ({ body, set }: Context) => {
+    const { ward, date_from, date_to } = body as {
+        ward: string;
+        date_from?: string | null;
+        date_to?: string | null;
+    };
+
+    try {
+        const params: any[] = [ward];
+        let dateFilter = '';
+
+        if (date_from && date_to) {
+            dateFilter = `AND DATE(al.discharge_datetime) BETWEEN DATE(?) AND DATE(?)`;
+            params.push(date_from, date_to);
+        } else if (date_from) {
+            dateFilter = `AND DATE(al.discharge_datetime) >= DATE(?)`;
+            params.push(date_from);
+        } else if (date_to) {
+            dateFilter = `AND DATE(al.discharge_datetime) <= DATE(?)`;
+            params.push(date_to);
+        }
+
+        const [rows] = await nurse.execute<RowDataPacket[]>(
+            `SELECT
+                al.admission_list_id,
+                al.an,
+                al.hn,
+                al.patient_name,
+                al.ward,
+                al.bedno,
+                al.reg_datetime,
+                al.discharge_datetime,
+                al.move_to_ward,
+                al.los,
+                al.status,
+                dt.discharge_type_name,
+                ast.status_name
+             FROM admission_list al
+             LEFT JOIN discharge_types dt ON dt.discharge_type_id = al.discharge_type_id
+             LEFT JOIN admission_statuses ast ON ast.status_code = al.status
+             WHERE al.ward = ? AND al.status IN ('2', '3')
+             ${dateFilter}
+             ORDER BY al.discharge_datetime DESC`,
+            params
+        );
+
+        return {
+            success: true,
+            total: rows.length,
+            data: rows.map(row => ({
+                ...row,
+                patient_name: row.patient_name ? sanitizeHTML(row.patient_name) : null,
+            }))
+        };
+    } catch (error) {
+        console.error('Get patient discharge by ward error:', error);
+        set.status = 500;
+        return { success: false, message: 'Internal Server Error' };
+    }
+};
+
 // ฟังก์ชันสำหรับดึงข้อมูลผู้ป่วยตาม ward (จากตาราง admission_list)
 export const getPatientByward = async ({ params, set }: Context) => {
     const { ward } = params as { ward: string };
     try {
         const sql = `
             SELECT 
+                admission_list_id,
                 al.hn,
                 al.an,
                 al.patient_name,
@@ -133,7 +317,7 @@ export const registerPatient = async ({ body, set }: Context) => {
                 ward,
                 spclty ?? null,
                 admission_type_id ?? 0,
-                status ?? 'A',
+                status ?? '1',
                 severity_level_id ?? serverity_level_id ?? null,
                 finalInchargeDoctor ?? null,
                 gender ?? '',
@@ -257,7 +441,7 @@ export const registerPatient = async ({ body, set }: Context) => {
 //                 ward, 
 //                 spclty ?? null, 
 //                 admission_type_id ?? 0, 
-//                 status ?? 'A', 
+//                 status ?? '1', 
 //                 severity_level_id ?? serverity_level_id ?? null, 
 //                 finalInchargeDoctor ?? null, 
 //                 gender ?? '', 
@@ -485,57 +669,70 @@ export const saveShiftAssessment = async ({ body, set }: Context) => {
     const safeComment = comment ?? null;
 
     try {
-        // ใช้ INSERT ... ON DUPLICATE KEY UPDATE ตาม UNIQUE KEY (admission_list_id, admission_change_shift_type_id)
-        // พร้อมเช็ค ward และ shift_date เพิ่มเติมตามที่ต้องการ
-        const [result] = await nurse.execute(
-            `INSERT INTO admission_change_shift (
-                admission_list_id, admission_change_shift_type_id,
-                an, hn, ward, shift_date, staff,
-                severity_level_id, ventilator_use,
-                level_of_care, pain_score, fall_risk, pressure_sore_risk,
-                gcs_eye, gcs_verbal, gcs_motor, oxygen_support_type_id,
-                safety_precautions, comment, create_datetime
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-            ON DUPLICATE KEY UPDATE
-                an = VALUES(an),
-                hn = VALUES(hn),
-                ward = VALUES(ward),
-                shift_date = VALUES(shift_date),
-                staff = VALUES(staff),
-                severity_level_id = VALUES(severity_level_id),
-                ventilator_use = VALUES(ventilator_use),
-                level_of_care = VALUES(level_of_care),
-                pain_score = VALUES(pain_score),
-                fall_risk = VALUES(fall_risk),
-                pressure_sore_risk = VALUES(pressure_sore_risk),
-                gcs_eye = VALUES(gcs_eye),
-                gcs_verbal = VALUES(gcs_verbal),
-                gcs_motor = VALUES(gcs_motor),
-                oxygen_support_type_id = VALUES(oxygen_support_type_id),
-                safety_precautions = VALUES(safety_precautions),
-                comment = VALUES(comment),
-                update_datetime = NOW(),
-                update_by = VALUES(staff)`,
-            [
-                admission_list_id, admission_change_shift_type_id,
-                an, hn, ward, shift_date, safeStaff,
-                severity_level_id, safeVentilatorUse,
-                safeLevelOfCare, safePainScore, safeFallRisk, safePressureSoreRisk,
-                safeGcsEye, safeGcsVerbal, safeGcsMotor, safeOxygenSupportTypeId,
-                safeSafetyPrecautions, safeComment
-            ]
+        // ค้นหาด้วย 4 ฟิลด์: admission_list_id + admission_change_shift_type_id + shift_date + ward
+        const [existing] = await nurse.execute<RowDataPacket[]>(
+            `SELECT admission_change_shift_id FROM admission_change_shift
+             WHERE admission_list_id = ?
+               AND admission_change_shift_type_id = ?
+               AND DATE(shift_date) = DATE(?)
+               AND ward = ?
+             LIMIT 1`,
+            [admission_list_id, admission_change_shift_type_id, shift_date, ward]
         );
 
-        const affectedRows = (result as any).affectedRows;
-        // affectedRows = 1 → INSERT ใหม่, affectedRows = 2 → UPDATE ข้อมูลเดิม
-        const action = affectedRows === 1 ? 'created' : 'updated';
+        let result: any;
+        let action: string;
+
+        if (existing.length > 0) {
+            // UPDATE ข้อมูลเดิม
+            const existingId = existing[0].admission_change_shift_id;
+            [result] = await nurse.execute(
+                `UPDATE admission_change_shift SET
+                    staff = ?, severity_level_id = ?, ventilator_use = ?,
+                    level_of_care = ?, pain_score = ?, fall_risk = ?, pressure_sore_risk = ?,
+                    gcs_eye = ?, gcs_verbal = ?, gcs_motor = ?, oxygen_support_type_id = ?,
+                    safety_precautions = ?, comment = ?,
+                    update_datetime = NOW(), update_by = ?
+                 WHERE admission_change_shift_id = ?`,
+                [
+                    safeStaff, severity_level_id, safeVentilatorUse,
+                    safeLevelOfCare, safePainScore, safeFallRisk, safePressureSoreRisk,
+                    safeGcsEye, safeGcsVerbal, safeGcsMotor, safeOxygenSupportTypeId,
+                    safeSafetyPrecautions, safeComment,
+                    safeStaff, existingId
+                ]
+            );
+            action = 'updated';
+            result.insertId = existingId;
+        } else {
+            // INSERT ใหม่
+            [result] = await nurse.execute(
+                `INSERT INTO admission_change_shift (
+                    admission_list_id, admission_change_shift_type_id,
+                    an, hn, ward, shift_date, staff,
+                    severity_level_id, ventilator_use,
+                    level_of_care, pain_score, fall_risk, pressure_sore_risk,
+                    gcs_eye, gcs_verbal, gcs_motor, oxygen_support_type_id,
+                    safety_precautions, comment, create_datetime
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+                [
+                    admission_list_id, admission_change_shift_type_id,
+                    an, hn, ward, shift_date, safeStaff,
+                    severity_level_id, safeVentilatorUse,
+                    safeLevelOfCare, safePainScore, safeFallRisk, safePressureSoreRisk,
+                    safeGcsEye, safeGcsVerbal, safeGcsMotor, safeOxygenSupportTypeId,
+                    safeSafetyPrecautions, safeComment
+                ]
+            );
+            action = 'created';
+        }
 
         return {
             success: true,
             message: action === 'created'
                 ? 'บันทึกข้อมูลอาการผู้ป่วยรายเวรเรียบร้อยแล้ว'
                 : 'อัพเดทข้อมูลอาการผู้ป่วยรายเวรเรียบร้อยแล้ว',
-            admission_change_shift_id: (result as any).insertId,
+            admission_change_shift_id: result.insertId,
             action
         };
     } catch (error) {
@@ -615,7 +812,7 @@ export const getPatientsRegisterByWard = async ({ params, set }: Context) => {
                 al.incharge_doctor
             FROM admission_list al
             LEFT JOIN spclty s ON s.spclty = al.spclty
-            WHERE al.ward = ? AND al.status IN ('1', 'A')
+            WHERE al.ward = ? AND al.status = '1'
             ORDER BY al.bedno ASC`,
             [ward]
         );
@@ -678,7 +875,7 @@ export const getPatientsRegisterByWard = async ({ params, set }: Context) => {
                 shiftsMap[shift.an].push({
                     date: formattedDate,
                     shiftId: shift.shiftId !== null ? Number(shift.shiftId) : null,
-                    isVentilator: shift.ventilator_use === 'Y' || shift.ventilator_use === '1' || shift.ventilator_use === true,
+                    isVentilator: shift.ventilator_use ?? null,
                     severityLevel: shift.severityLevel !== null ? Number(shift.severityLevel) : null
                 });
             });

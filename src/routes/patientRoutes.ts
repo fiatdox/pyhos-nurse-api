@@ -1,6 +1,6 @@
 import { Elysia, t } from 'elysia';
 import { authMiddleware } from '../middlewares/authMiddleware';
-import { getPatientsByWard, getPatientsBYAN, registerPatient, savePatientsInShift, getPatientByward, getPatientsRegisterByWard, saveShiftAssessment, getShiftAssessment } from '../controllers/patientController';
+import { getPatientsByWard, getPatientsBYAN, registerPatient, savePatientsInShift, getPatientByward, getPatientsRegisterByWard, saveShiftAssessment, getShiftAssessment, dischargePatient, getPatientDischargeByWard, cancelDischarge } from '../controllers/patientController';
 
 export const patientRoutes = new Elysia({ prefix: '/api/v1' })
     .use(authMiddleware)
@@ -75,6 +75,28 @@ export const patientRoutes = new Elysia({ prefix: '/api/v1' })
             oxygen_support_type_id: t.Optional(t.Union([t.Number(), t.Null()])),
             safety_precautions: t.Optional(t.Union([t.Array(t.String()), t.Null()])),
             comment: t.Optional(t.Union([t.String(), t.Null()])),
+        })
+    })
+    .post('/patient-discharge-by-ward', getPatientDischargeByWard, {
+        body: t.Object({
+            ward: t.String(),
+            date_from: t.Optional(t.Union([t.String(), t.Null()])),
+            date_to: t.Optional(t.Union([t.String(), t.Null()])),
+        })
+    })
+    .post('/cancel-discharge', cancelDischarge, {
+        body: t.Object({
+            admission_list_id: t.Number(),
+        })
+    })
+    .post('/discharge-patient', dischargePatient, {
+        body: t.Object({
+            admission_list_id: t.Number(),
+            discharge_type_id: t.Number(),
+            discharge_datetime: t.String(),
+            move_to_ward: t.Union([t.String(), t.Null()]),
+            status: t.String(),
+            los: t.Number(),
         })
     })
     .post('/save-patients-in-shift', savePatientsInShift, {

@@ -8,12 +8,14 @@
   "dependencies": {
     "@elysiajs/cors": "^1.4.1",
     "@elysiajs/jwt": "^1.4.1",
+    "bcryptjs": "^3.0.3",
     "elysia": "^1.4.27",
     "elysia-rate-limit": "^4.5.0",
     "mysql2": "^3.19.0",
     "sanitize-html": "^2.13.0"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^3.0.0",
     "@types/sanitize-html": "^2.16.1",
     "bun-types": "latest"
   },

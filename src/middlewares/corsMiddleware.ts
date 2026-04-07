@@ -10,7 +10,7 @@ export const corsMiddleware = (app: Elysia) =>
         cors({
             origin: process.env.CORS_ORIGINS?.split(',') || ['http://localhost:3000'],
             credentials: true,
-            allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+            methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
             allowedHeaders: ['Content-Type', 'Authorization'],
             maxAge: 86400 // 24 hours
         })

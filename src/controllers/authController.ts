@@ -1,31 +1,40 @@
 import { Context } from 'elysia';
-import { his } from '../db';
-import { createHash } from 'crypto';
+import { hris } from '../db';
+import bcrypt from 'bcryptjs';
 import { RowDataPacket } from 'mysql2';
 
 export const login = async ({ body, set, jwt }: Context & { jwt: any }) => {
     const { username, password } = body as { username: string; password: string };
 
-    // เข้ารหัส Password เป็น MD5 ตามที่ระบุ
-    const hashedPassword = createHash('md5').update(password).digest('hex');
-
     try {
-        const [rows] = await his.execute<RowDataPacket[]>(
-            'SELECT loginname, name FROM opduser WHERE loginname = ? AND passweb = ?',
-            [username, hashedPassword]
+        const [rows] = await hris.execute<RowDataPacket[]>(
+            `SELECT id, username, password, CONCAT(pname, fname, ' ', lname) AS employee_name FROM users WHERE username = ?`,
+            [username]
         );
 
         if (rows.length > 0) {
             const user = rows[0] as any;
+            const isMatch = await bcrypt.compare(password, user.password);
+
+            if (!isMatch) {
+                set.status = 401;
+                return { success: false, message: 'Invalid username or password' };
+            }
+
             const token = await jwt.sign({
-                loginname: user.loginname,
-                name: user.name
+                id: user.id,
+                username: user.username,
+                name: user.employee_name
             });
 
             return {
                 success: true,
                 token,
-                data: user
+                data: {
+                    id: user.id,
+                    username: user.username,
+                    name: user.employee_name
+                }
             };
         }
 

@@ -21,3 +21,14 @@ export const nurse = mysql.createPool({
     connectionLimit: 50,
     queueLimit: 0
 });
+
+export const hris = mysql.createPool({
+    host: process.env.HRIS_HOST,
+    port: Number(process.env.HRIS_PORT),
+    user: process.env.HRIS_USER,
+    password: process.env.HRIS_PASSWORD,
+    database: process.env.HRIS_NAME,
+    waitForConnections: true,
+    connectionLimit: 50,
+    queueLimit: 0
+});
