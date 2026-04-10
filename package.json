@@ -12,6 +12,7 @@
     "elysia": "^1.4.27",
     "elysia-rate-limit": "^4.5.0",
     "mysql2": "^3.19.0",
+    "postgres": "^3.4.9",
     "sanitize-html": "^2.13.0"
   },
   "devDependencies": {

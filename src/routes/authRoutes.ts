@@ -1,6 +1,6 @@
 import { Elysia, t } from 'elysia';
 import { jwt } from '@elysiajs/jwt';
-import { login, refreshToken } from '../controllers/authController';
+import { login, loginCOREKON, refreshToken } from '../controllers/authController';
 
 export const authRoutes = new Elysia({ prefix: '/api/v1' })
     // This route group also needs the JWT plugin to sign tokens
@@ -10,6 +10,13 @@ export const authRoutes = new Elysia({ prefix: '/api/v1' })
         exp: '8h' // ปรับอายุ Token เป็น 8 ชั่วโมง
     }))
     .post('/login', login, {
+        body: t.Object({
+            username: t.String(),
+            password: t.String()
+        })
+    })
+
+    .post('/login/core-kon', loginCOREKON, {
         body: t.Object({
             username: t.String(),
             password: t.String()

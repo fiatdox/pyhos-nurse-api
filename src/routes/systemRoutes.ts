@@ -1,6 +1,6 @@
 import { Elysia, t } from 'elysia';
 import { authMiddleware } from '../middlewares/authMiddleware';
-import { getSpclty, getWards,getAdmissionType,getAdmissionSeverityLV,getAdmissionChangeShiftTypes, getAllStaff, addStaff, addWardStaffs, getWardStaffByWard, clearWardStaffsByWard, getWardsV1 } from '../controllers/systemController';
+import { getSpclty, getWards,getAdmissionType,getAdmissionSeverityLV,getAdmissionChangeShiftTypes, getAllStaff, addStaff, addWardStaffs, getWardStaffByWard, clearWardStaffsByWard, getWardsV1, getAdmissionShiftCareLevels } from '../controllers/systemController';
 
 export const SystemRoutes = new Elysia({ prefix: '/api/v1' })
     .use(authMiddleware)
@@ -16,6 +16,8 @@ export const SystemRoutes = new Elysia({ prefix: '/api/v1' })
     .get('/admission-severity-levels', getAdmissionSeverityLV)
     // เพิ่มเส้นทางสำหรับดึงข้อมูลประเภทเวร
     .get('/admission-change-shift-types', getAdmissionChangeShiftTypes)
+    // เพิ่มเส้นทางสำหรับดึงข้อมูลระดับการดูแลผู้ป่วยในเวร
+    .get('/admission-shift-care-levels', getAdmissionShiftCareLevels)
     // เพิ่มเส้นทางสำหรับดึงข้อมูลเจ้าหน้าที่ทั้งหมด
     .get('/staffs', getAllStaff)
     // เพิ่มเส้นทางสำหรับเพิ่มข้อมูลเจ้าหน้าที่

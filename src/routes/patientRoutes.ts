@@ -1,6 +1,6 @@
 import { Elysia, t } from 'elysia';
 import { authMiddleware } from '../middlewares/authMiddleware';
-import { getPatientsByWard, getPatientsBYAN, registerPatient, savePatientsInShift, getPatientByward, getPatientsRegisterByWard, saveShiftAssessment, getShiftAssessment, dischargePatient, getPatientDischargeByWard, cancelDischarge } from '../controllers/patientController';
+import { getPatientsByWard, getPatientsBYAN, registerPatient, savePatientsInShift, getPatientByward, getPatientsRegisterByWard, saveShiftAssessment, getShiftAssessment, dischargePatient, getPatientDischargeByWard, cancelDischarge, upsertAdmissionShiftDailyRecord, getPatientShiftDailyRecordsByWard, copyPreviousShiftDailyRecords } from '../controllers/patientController';
 
 export const patientRoutes = new Elysia({ prefix: '/api/v1' })
     .use(authMiddleware)
@@ -97,6 +97,33 @@ export const patientRoutes = new Elysia({ prefix: '/api/v1' })
             move_to_ward: t.Union([t.String(), t.Null()]),
             status: t.String(),
             los: t.Number(),
+        })
+    })
+    .post('/patient-shift-daily-records/copy-previous', copyPreviousShiftDailyRecords, {
+        body: t.Object({
+            ward: t.String(),
+            target_date: t.String(),
+            target_shift_type_id: t.Number(),
+            source_date: t.String(),
+            source_shift_type_id: t.Number()
+        })
+    })
+    .post('/patient-shift-daily-records', getPatientShiftDailyRecordsByWard, {
+        body: t.Object({
+            ward: t.String(),
+            date: t.String()
+        })
+    })
+    .post('/admission-shift-daily-records', upsertAdmissionShiftDailyRecord, {
+        body: t.Object({
+            admission_list_id: t.Number(),
+            level: t.Optional(t.Union([t.Number(), t.Null()])),
+            admission_shift_care_level_id: t.Optional(t.Union([t.Number(), t.Null()])),
+            shift_type_id: t.Number(),
+            date: t.String(),
+            hn: t.Optional(t.String()),
+            an: t.Optional(t.String()),
+            severity_level_id: t.Optional(t.Number())
         })
     })
     .post('/save-patients-in-shift', savePatientsInShift, {

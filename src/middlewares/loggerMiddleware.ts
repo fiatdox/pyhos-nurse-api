@@ -99,10 +99,15 @@ export const loggerMiddleware = (app: Elysia) =>
             const url = new URL(request.url);
             const fullPath = url.pathname + url.search;
             
-            // พยายามดึง User ID จาก context (ถ้ามี)
-            // authMiddleware จะ derive 'user' { loginname, name } มาให้
-            const user = (ctx as any).user;
-            const userId = user?.loginname || '-';
+            // ดึง loginname จาก JWT token โดย decode payload (ไม่ verify — ใช้แค่ logging)
+            let userId = '-';
+            const authHeader = request.headers.get('authorization');
+            if (authHeader?.startsWith('Bearer ')) {
+                try {
+                    const payload = JSON.parse(atob(authHeader.slice(7).split('.')[1]));
+                    userId = payload?.loginname || '-';
+                } catch { /* token malformed — ปล่อยเป็น '-' */ }
+            }
             
             // เพิ่ม User Agent และ Referer
             const userAgent = request.headers.get('user-agent') || '-';

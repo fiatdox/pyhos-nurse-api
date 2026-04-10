@@ -28,7 +28,7 @@ export const getWards = async ({ set }: Context) => {
 // ฟังก์ชั่นแสดงรายชื่อหอผู้ป่วย
 export const getWardsV1 = async ({ set }: Context) => {
     try {
-        const [rows] = await nurse.execute<RowDataPacket[]>(`SELECT ward,ward_name,his_code,is_labor_room,is_active FROM ward where is_active='Y' order by ward_name desc`);
+        const [rows] = await nurse.execute<RowDataPacket[]>(`SELECT ward,ward_name,his_code,is_labor_room,is_active,general,crisis FROM ward where is_active='Y' order by ward_name desc`);
         return {
             success: true,
             // ป้องกันการโจมตีแบบ XSS โดยการลบแท็ก HTML ออกจากชื่อหอผู้ป่วย
@@ -267,6 +267,29 @@ export const addWardStaffs = async ({ body, set }: Context) => {
         };
     } finally {
         connection.release();
+    }
+};
+
+// ระดับการดูแลผู้ป่วยในเวร
+export const getAdmissionShiftCareLevels = async ({ set }: Context) => {
+    try {
+        const [rows] = await nurse.execute<RowDataPacket[]>(
+            `SELECT admission_shift_care_level_id, name FROM admission_shift_care_levels WHERE is_active = 'Y'`
+        );
+        return {
+            success: true,
+            data: rows.map(row => ({
+                ...row,
+                name: sanitizeHTML(row.name)
+            }))
+        };
+    } catch (error) {
+        console.error('Get admission shift care levels error:', error);
+        set.status = 500;
+        return {
+            success: false,
+            message: 'Internal Server Error'
+        };
     }
 };
 

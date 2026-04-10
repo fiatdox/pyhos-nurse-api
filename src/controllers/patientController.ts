@@ -7,20 +7,43 @@ import { sanitizeHTML } from '../utils/sanitize';
 export const getPatientsByWard = async ({ body, set }: Context) => {
     const { ward } = body as { ward: string };
     try {
-        const [rows] = await his.execute<RowDataPacket[]>(
-            `select i.an,i.hn,i.dchstts,CONCAT(p.pname,p.fname,' ',p.lname)as ptname  
-            ,concat(i.regdate,' ',i.regtime) as regdate,p.birthday,p.sex,a.bedno ,d.name  as doctor_name,i.ward
-            from ipt i 
-            left join patient p on p.hn=i.hn
-            LEFT join iptadm a on a.an=i.an
-            left join doctor d on d.code=i.incharge_doctor 
-            where i.dchstts is null and i.ward = ? order by a.bedno asc`,
+        // ดึง an ที่ลงทะเบียนแล้วใน admission_list (status=1 = ยังแอดมิทอยู่) ward เดียวกัน
+        const [registeredRows] = await nurse.execute<RowDataPacket[]>(
+            `SELECT an FROM admission_list WHERE ward = ? AND status = '1'`,
             [ward]
         );
+        const registeredAns = (registeredRows as RowDataPacket[]).map(r => r.an);
+
+        let rows: RowDataPacket[];
+        if (registeredAns.length > 0) {
+            const placeholders = registeredAns.map(() => '?').join(',');
+            [rows] = await his.execute<RowDataPacket[]>(
+                `SELECT i.an, i.hn, i.dchstts, CONCAT(p.pname, p.fname, ' ', p.lname) AS ptname,
+                concat(i.regdate,' ',i.regtime) AS regdate, p.birthday, p.sex, a.bedno, d.name AS doctor_name, i.ward
+                FROM ipt i
+                LEFT JOIN patient p ON p.hn = i.hn
+                LEFT JOIN iptadm a ON a.an = i.an
+                LEFT JOIN doctor d ON d.code = i.incharge_doctor
+                WHERE i.dchstts IS NULL AND i.ward = ? AND i.an NOT IN (${placeholders})
+                ORDER BY a.bedno ASC`,
+                [ward, ...registeredAns]
+            );
+        } else {
+            [rows] = await his.execute<RowDataPacket[]>(
+                `SELECT i.an, i.hn, i.dchstts, CONCAT(p.pname, p.fname, ' ', p.lname) AS ptname,
+                concat(i.regdate,' ',i.regtime) AS regdate, p.birthday, p.sex, a.bedno, d.name AS doctor_name, i.ward
+                FROM ipt i
+                LEFT JOIN patient p ON p.hn = i.hn
+                LEFT JOIN iptadm a ON a.an = i.an
+                LEFT JOIN doctor d ON d.code = i.incharge_doctor
+                WHERE i.dchstts IS NULL AND i.ward = ?
+                ORDER BY a.bedno ASC`,
+                [ward]
+            );
+        }
 
         return {
             success: true,
-            // Sanitize each patient's name before sending it back
             data: rows.map(row => ({
                 ...row,
                 ptname: sanitizeHTML(row.ptname)
@@ -511,6 +534,175 @@ export const registerPatient = async ({ body, set }: Context) => {
 //         connection.release();
 //     };
 // };
+
+// บันทึก/อัพเดทข้อมูลการดูแลผู้ป่วยรายเวร (Upsert)
+export const upsertAdmissionShiftDailyRecord = async ({ body, set, user }: Context & { user: any }) => {
+    const { admission_list_id, level, admission_shift_care_level_id, shift_type_id, date, hn, an, severity_level_id } = body as {
+        admission_list_id: number;
+        level?: number | null;
+        admission_shift_care_level_id?: number | null;
+        shift_type_id: number;
+        date: string;
+        hn?: string;
+        an?: string;
+        severity_level_id?: number;
+    };
+
+    const careLevelId = admission_shift_care_level_id ?? null;
+    const severityLevelId = level ?? severity_level_id ?? null;
+
+    // แปลง DD/MM/YYYY → YYYY-MM-DD
+    const parsedDate = date.includes('/')
+        ? date.split('/').reverse().join('-')
+        : date;
+
+    const recorded_by = user?.id ?? null;
+    const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+
+    try {
+        const [existing] = await nurse.execute<RowDataPacket[]>(
+            `SELECT admission_shift_daily_record FROM admission_shift_daily_record
+             WHERE admission_list_id = ? AND shift_type_id = ? AND record_date = ?`,
+            [admission_list_id, shift_type_id, parsedDate]
+        );
+
+        if (existing.length > 0) {
+            await nurse.execute(
+                `UPDATE admission_shift_daily_record
+                 SET admission_shift_care_level_id = ?, severity_level_id = ?, hn = ?, an = ?, updated_by = ?, updated_at = ?
+                 WHERE admission_list_id = ? AND shift_type_id = ? AND record_date = ?`,
+                [careLevelId, severityLevelId, hn ?? null, an ?? null, recorded_by, now, admission_list_id, shift_type_id, parsedDate]
+            );
+            return { success: true, message: 'อัพเดทข้อมูลเรียบร้อยแล้ว' };
+        } else {
+            await nurse.execute(
+                `INSERT INTO admission_shift_daily_record
+                 (admission_list_id, shift_type_id, admission_shift_care_level_id, severity_level_id, record_date, hn, an, recorded_by, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [admission_list_id, shift_type_id, careLevelId, severityLevelId, parsedDate, hn ?? null, an ?? null, recorded_by, now]
+            );
+            return { success: true, message: 'บันทึกข้อมูลเรียบร้อยแล้ว' };
+        }
+    } catch (error) {
+        console.error('Upsert admission shift daily record error:', error);
+        set.status = 500;
+        return { success: false, message: 'Internal Server Error' };
+    }
+};
+
+// คัดลอก shift daily records จากเวร/วันที่ต้นทาง → ปลายทาง (upsert)
+export const copyPreviousShiftDailyRecords = async ({ body, set, user }: Context & { user: any }) => {
+    const { ward, target_date, target_shift_type_id, source_date, source_shift_type_id } = body as {
+        ward: string;
+        target_date: string;
+        target_shift_type_id: number;
+        source_date: string;
+        source_shift_type_id: number;
+    };
+
+    const parseDate = (d: string) => d.includes('/') ? d.split('/').reverse().join('-') : d;
+    const parsedTargetDate = parseDate(target_date);
+    const parsedSourceDate = parseDate(source_date);
+    const recorded_by = user?.id ?? null;
+    const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+
+    try {
+        // ดึงข้อมูลต้นทาง (source) เฉพาะ ward นั้น
+        const [sourceRows] = await nurse.execute<RowDataPacket[]>(
+            `SELECT asdr.admission_list_id, asdr.admission_shift_care_level_id, asdr.severity_level_id, asdr.hn, asdr.an
+             FROM admission_shift_daily_record asdr
+             JOIN admission_list al ON al.admission_list_id = asdr.admission_list_id
+             WHERE al.ward = ? AND al.status = '1' AND asdr.shift_type_id = ? AND asdr.record_date = ?`,
+            [ward, source_shift_type_id, parsedSourceDate]
+        );
+
+        if (sourceRows.length === 0) {
+            return { success: true, message: 'ไม่พบข้อมูลต้นทางที่จะคัดลอก', copied: 0 };
+        }
+
+        // upsert ทีละรายการ
+        for (const row of sourceRows) {
+            const [existing] = await nurse.execute<RowDataPacket[]>(
+                `SELECT admission_shift_daily_record FROM admission_shift_daily_record
+                 WHERE admission_list_id = ? AND shift_type_id = ? AND record_date = ?`,
+                [row.admission_list_id, target_shift_type_id, parsedTargetDate]
+            );
+
+            if (existing.length > 0) {
+                await nurse.execute(
+                    `UPDATE admission_shift_daily_record
+                     SET admission_shift_care_level_id = ?, severity_level_id = ?, hn = ?, an = ?, updated_by = ?, updated_at = ?
+                     WHERE admission_list_id = ? AND shift_type_id = ? AND record_date = ?`,
+                    [row.admission_shift_care_level_id, row.severity_level_id, row.hn, row.an, recorded_by, now,
+                     row.admission_list_id, target_shift_type_id, parsedTargetDate]
+                );
+            } else {
+                await nurse.execute(
+                    `INSERT INTO admission_shift_daily_record
+                     (admission_list_id, shift_type_id, admission_shift_care_level_id, severity_level_id, record_date, hn, an, recorded_by, created_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [row.admission_list_id, target_shift_type_id, row.admission_shift_care_level_id,
+                     row.severity_level_id, parsedTargetDate, row.hn, row.an, recorded_by, now]
+                );
+            }
+        }
+
+        return {
+            success: true,
+            message: `คัดลอกข้อมูลเรียบร้อยแล้ว จำนวน ${sourceRows.length} รายการ`,
+            copied: sourceRows.length
+        };
+    } catch (error) {
+        console.error('Copy previous shift daily records error:', error);
+        set.status = 500;
+        return { success: false, message: 'Internal Server Error' };
+    }
+};
+
+// ดึงข้อมูลผู้ป่วยพร้อม care level และ severity level ของแต่ละเวรตามวันที่
+export const getPatientShiftDailyRecordsByWard = async ({ body, set }: Context) => {
+    const { ward, date } = body as { ward: string; date: string };
+
+    const parsedDate = date.includes('/')
+        ? date.split('/').reverse().join('-')
+        : date;
+
+    try {
+        const [rows] = await nurse.execute<RowDataPacket[]>(
+            `SELECT
+                al.admission_list_id,
+                al.an,
+                al.patient_name,
+                (SELECT asdr.admission_shift_care_level_id FROM admission_shift_daily_record asdr
+                 WHERE asdr.admission_list_id = al.admission_list_id AND asdr.shift_type_id = 1 AND asdr.record_date = ?) AS night_care_level,
+                (SELECT asdr.severity_level_id FROM admission_shift_daily_record asdr
+                 WHERE asdr.admission_list_id = al.admission_list_id AND asdr.shift_type_id = 1 AND asdr.record_date = ?) AS night_severity_level,
+                (SELECT asdr.admission_shift_care_level_id FROM admission_shift_daily_record asdr
+                 WHERE asdr.admission_list_id = al.admission_list_id AND asdr.shift_type_id = 2 AND asdr.record_date = ?) AS morning_care_level,
+                (SELECT asdr.severity_level_id FROM admission_shift_daily_record asdr
+                 WHERE asdr.admission_list_id = al.admission_list_id AND asdr.shift_type_id = 2 AND asdr.record_date = ?) AS morning_severity_level,
+                (SELECT asdr.admission_shift_care_level_id FROM admission_shift_daily_record asdr
+                 WHERE asdr.admission_list_id = al.admission_list_id AND asdr.shift_type_id = 3 AND asdr.record_date = ?) AS evening_care_level,
+                (SELECT asdr.severity_level_id FROM admission_shift_daily_record asdr
+                 WHERE asdr.admission_list_id = al.admission_list_id AND asdr.shift_type_id = 3 AND asdr.record_date = ?) AS evening_severity_level
+            FROM admission_list al
+            WHERE al.ward = ? AND al.status = '1'`,
+            [parsedDate, parsedDate, parsedDate, parsedDate, parsedDate, parsedDate, ward]
+        );
+
+        return {
+            success: true,
+            data: rows.map(row => ({
+                ...row,
+                patient_name: sanitizeHTML(row.patient_name)
+            }))
+        };
+    } catch (error) {
+        console.error('Get patient shift daily records by ward error:', error);
+        set.status = 500;
+        return { success: false, message: 'Internal Server Error' };
+    }
+};
 
 // ฟังก์ชันสำหรับดึงข้อมูลผู้ป่วยตาม AN
 export const getPatientsBYAN = async ({ body, set }: Context) => {
