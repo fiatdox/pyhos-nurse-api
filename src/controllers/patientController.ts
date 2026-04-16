@@ -253,6 +253,7 @@ export const getPatientByward = async ({ params, set }: Context) => {
                 al.an,
                 al.patient_name,
                 DATE_ADD(al.reg_datetime, INTERVAL 543 YEAR) AS reg_datetime,
+                DATE(reg_datetime)as reg_date,
                 t.admission_type_name,
                 al.incharge_doctor,
                 s.name AS spclty_name,al.bedno 
@@ -329,8 +330,9 @@ export const registerPatient = async ({ body, set }: Context) => {
                 ward, spclty, admission_type_id, status, severity_level_id,
                 incharge_doctor, gender, bedno, is_ventilator,
                 before_ward, oxygen_support_type_id,
+                admission_change_shift_type_id,
                 discharge_type_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
             [
                 an,
                 hn,
@@ -346,8 +348,9 @@ export const registerPatient = async ({ body, set }: Context) => {
                 gender ?? '',
                 bedno ?? null,
                 is_ventilator ?? 'N',
-                before_ward ?? null,                                    // ✅ varchar(10)
-                is_ventilator === 'N' ? (oxygen_support_type ?? null) : null, // ✅ tinyint(4)
+                before_ward ?? null,
+                is_ventilator === 'N' ? (oxygen_support_type ?? null) : null,
+                admission_change_shift_type_id ?? null,
             ]
         );
 
@@ -981,6 +984,131 @@ export const getShiftAssessment = async ({ body, set }: Context) => {
             success: false,
             message: 'เกิดข้อผิดพลาดในการดึงข้อมูลอาการผู้ป่วยรายเวร'
         };
+    }
+};
+
+// ฟังก์ชันสรุปข้อมูลสถิติผู้ป่วยรายเวรประจำวัน แยกตาม shift type
+export const getPatientShiftDailyRecordsSummary = async ({ body, set }: Context) => {
+    const { ward, date } = body as { ward: string; date: string };
+
+    if (!ward || !ward.trim() || !date || !date.trim()) {
+        set.status = 400;
+        return { success: false, message: 'กรุณาระบุ ward และ date' };
+    }
+
+    const parsedDate = date.includes('/')
+        ? date.split('/').reverse().join('-')
+        : date;
+
+    try {
+        const [rows] = await nurse.execute<RowDataPacket[]>(
+            `SELECT
+                 acst.admission_change_shift_type_id
+                ,acst.shift_name
+                ,acst.weight
+                ,SUM(CASE WHEN al.admission_list_id IS NOT NULL THEN 1 ELSE 0 END) AS count_remain
+
+                ,(
+                    SELECT COUNT(*)
+                    FROM admission_list al2
+                    WHERE al2.ward = ?
+                      AND al2.admission_type_id = 1
+                      AND DATE(al2.reg_datetime) = ?
+                      AND al2.admission_change_shift_type_id = acst.admission_change_shift_type_id
+                ) AS count_new_patient
+
+                ,(
+                    SELECT COUNT(*)
+                    FROM admission_list al2
+                    WHERE al2.ward = ?
+                      AND al2.admission_type_id = 2
+                      AND DATE(al2.reg_datetime) = ?
+                      AND al2.admission_change_shift_type_id = acst.admission_change_shift_type_id
+                ) AS count_get_ward_patient
+                ,SUM(CASE WHEN al.discharge_type_id = 1
+                          AND DATE(al.discharge_datetime) = ?
+                          AND TIME(al.discharge_datetime) BETWEEN
+                                CASE acst.admission_change_shift_type_id
+                                    WHEN 1 THEN '00:00:00' WHEN 2 THEN '08:00:00' WHEN 3 THEN '16:00:00'
+                                END
+                              AND
+                                CASE acst.admission_change_shift_type_id
+                                    WHEN 1 THEN '07:59:59' WHEN 2 THEN '15:59:59' WHEN 3 THEN '23:59:59'
+                                END
+                          THEN 1 ELSE 0 END) AS count_discharge
+                ,SUM(CASE WHEN al.discharge_type_id = 2
+                          AND DATE(al.discharge_datetime) = ?
+                          AND TIME(al.discharge_datetime) BETWEEN
+                                CASE acst.admission_change_shift_type_id
+                                    WHEN 1 THEN '00:00:00' WHEN 2 THEN '08:00:00' WHEN 3 THEN '16:00:00'
+                                END
+                              AND
+                                CASE acst.admission_change_shift_type_id
+                                    WHEN 1 THEN '07:59:59' WHEN 2 THEN '15:59:59' WHEN 3 THEN '23:59:59'
+                                END
+                          THEN 1 ELSE 0 END) AS count_transfer_out
+                ,SUM(CASE WHEN al.discharge_type_id = 3
+                          AND DATE(al.discharge_datetime) = ?
+                          AND TIME(al.discharge_datetime) BETWEEN
+                                CASE acst.admission_change_shift_type_id
+                                    WHEN 1 THEN '00:00:00' WHEN 2 THEN '08:00:00' WHEN 3 THEN '16:00:00'
+                                END
+                              AND
+                                CASE acst.admission_change_shift_type_id
+                                    WHEN 1 THEN '07:59:59' WHEN 2 THEN '15:59:59' WHEN 3 THEN '23:59:59'
+                                END
+                          THEN 1 ELSE 0 END) AS count_refer
+                ,SUM(CASE WHEN al.discharge_type_id = 4
+                          AND DATE(al.discharge_datetime) = ?
+                          AND TIME(al.discharge_datetime) BETWEEN
+                                CASE acst.admission_change_shift_type_id
+                                    WHEN 1 THEN '00:00:00' WHEN 2 THEN '08:00:00' WHEN 3 THEN '16:00:00'
+                                END
+                              AND
+                                CASE acst.admission_change_shift_type_id
+                                    WHEN 1 THEN '07:59:59' WHEN 2 THEN '15:59:59' WHEN 3 THEN '23:59:59'
+                                END
+                          THEN 1 ELSE 0 END) AS count_dead
+                ,SUM(CASE WHEN asdr.admission_shift_care_level_id = 1 AND al.admission_list_id IS NOT NULL THEN 1 ELSE 0 END) AS care_normal
+                ,SUM(CASE WHEN asdr.admission_shift_care_level_id = 2 AND al.admission_list_id IS NOT NULL THEN 1 ELSE 0 END) AS care_o2
+                ,SUM(CASE WHEN asdr.admission_shift_care_level_id = 3 AND al.admission_list_id IS NOT NULL THEN 1 ELSE 0 END) AS care_hfnc
+                ,SUM(CASE WHEN asdr.admission_shift_care_level_id = 4 AND al.admission_list_id IS NOT NULL THEN 1 ELSE 0 END) AS care_vent_cs
+                ,SUM(CASE WHEN asdr.severity_level_id = 1 AND al.admission_list_id IS NOT NULL THEN 1 ELSE 0 END) AS severity_1
+                ,SUM(CASE WHEN asdr.severity_level_id = 2 AND al.admission_list_id IS NOT NULL THEN 1 ELSE 0 END) AS severity_2
+                ,SUM(CASE WHEN asdr.severity_level_id = 3 AND al.admission_list_id IS NOT NULL THEN 1 ELSE 0 END) AS severity_3
+                ,SUM(CASE WHEN asdr.severity_level_id = 4 AND al.admission_list_id IS NOT NULL THEN 1 ELSE 0 END) AS severity_4
+                ,SUM(CASE WHEN asdr.severity_level_id = 5 AND al.admission_list_id IS NOT NULL THEN 1 ELSE 0 END) AS severity_5
+            FROM admission_change_shift_types acst
+            LEFT JOIN admission_shift_daily_record asdr
+                   ON asdr.shift_type_id = acst.admission_change_shift_type_id
+                  AND asdr.record_date = ?
+            LEFT JOIN admission_list al
+                   ON al.admission_list_id = asdr.admission_list_id
+                  AND al.ward = ?
+            GROUP BY
+                 acst.admission_change_shift_type_id
+                ,acst.shift_name
+                ,acst.weight
+            ORDER BY acst.admission_change_shift_type_id`,
+            [
+                ward,       // subquery count_new_patient     : al2.ward
+                parsedDate, // subquery count_new_patient     : DATE(al2.reg_datetime)
+                ward,       // subquery count_get_ward_patient: al2.ward
+                parsedDate, // subquery count_get_ward_patient: DATE(al2.reg_datetime)
+                parsedDate, // count_discharge    : DATE(al.discharge_datetime)
+                parsedDate, // count_transfer_out : DATE(al.discharge_datetime)
+                parsedDate, // count_refer        : DATE(al.discharge_datetime)
+                parsedDate, // count_dead         : DATE(al.discharge_datetime)
+                parsedDate, // asdr.record_date
+                ward        // al.ward
+            ]
+        );
+
+        return { success: true, data: rows };
+    } catch (error) {
+        console.error('Get patient shift daily records summary error:', error);
+        set.status = 500;
+        return { success: false, message: 'Internal Server Error' };
     }
 };
 

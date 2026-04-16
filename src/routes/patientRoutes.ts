@@ -1,6 +1,6 @@
 import { Elysia, t } from 'elysia';
 import { authMiddleware } from '../middlewares/authMiddleware';
-import { getPatientsByWard, getPatientsBYAN, registerPatient, savePatientsInShift, getPatientByward, getPatientsRegisterByWard, saveShiftAssessment, getShiftAssessment, dischargePatient, getPatientDischargeByWard, cancelDischarge, upsertAdmissionShiftDailyRecord, getPatientShiftDailyRecordsByWard, copyPreviousShiftDailyRecords } from '../controllers/patientController';
+import { getPatientsByWard, getPatientsBYAN, registerPatient, savePatientsInShift, getPatientByward, getPatientsRegisterByWard, saveShiftAssessment, getShiftAssessment, dischargePatient, getPatientDischargeByWard, cancelDischarge, upsertAdmissionShiftDailyRecord, getPatientShiftDailyRecordsByWard, copyPreviousShiftDailyRecords, getPatientShiftDailyRecordsSummary } from '../controllers/patientController';
 
 export const patientRoutes = new Elysia({ prefix: '/api/v1' })
     .use(authMiddleware)
@@ -109,6 +109,12 @@ export const patientRoutes = new Elysia({ prefix: '/api/v1' })
         })
     })
     .post('/patient-shift-daily-records', getPatientShiftDailyRecordsByWard, {
+        body: t.Object({
+            ward: t.String(),
+            date: t.String()
+        })
+    })
+    .post('/patient-shift-daily-records-summary', getPatientShiftDailyRecordsSummary, {
         body: t.Object({
             ward: t.String(),
             date: t.String()
