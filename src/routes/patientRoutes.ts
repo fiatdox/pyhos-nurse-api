@@ -1,6 +1,6 @@
 import { Elysia, t } from 'elysia';
 import { authMiddleware } from '../middlewares/authMiddleware';
-import { getPatientsByWard, getPatientsBYAN, registerPatient, savePatientsInShift, getPatientByward, getPatientsRegisterByWard, saveShiftAssessment, getShiftAssessment, dischargePatient, getPatientDischargeByWard, cancelDischarge, upsertAdmissionShiftDailyRecord, getPatientShiftDailyRecordsByWard, copyPreviousShiftDailyRecords, getPatientShiftDailyRecordsSummary } from '../controllers/patientController';
+import { getPatientsByWard, getPatientsBYAN, registerPatient, updatePatient, savePatientsInShift, getPatientByward, getDischargedPatientByWard, getPatientsRegisterByWard, saveShiftAssessment, getShiftAssessment, dischargePatient, getPatientDischargeByWard, cancelDischarge, upsertAdmissionShiftDailyRecord, getPatientShiftDailyRecordsByWard, copyPreviousShiftDailyRecords, getPatientShiftDailyRecordsSummary } from '../controllers/patientController';
 
 export const patientRoutes = new Elysia({ prefix: '/api/v1' })
     .use(authMiddleware)
@@ -12,6 +12,13 @@ export const patientRoutes = new Elysia({ prefix: '/api/v1' })
     .get('/view-patient-by-ward/:ward', getPatientByward, {
         params: t.Object({
             ward: t.String()
+        })
+    })
+    .post('/view-discharged-patient-by-ward', getDischargedPatientByWard, {
+        body: t.Object({
+            ward: t.String(),
+            ds1: t.String(),
+            ds2: t.String(),
         })
     })
     .get('/patients-register-by-ward/:ward', getPatientsRegisterByWard, {
@@ -30,20 +37,32 @@ export const patientRoutes = new Elysia({ prefix: '/api/v1' })
             hn: t.String(),
             patient_name: t.String(),
             reg_datetime: t.String(),
-            birth_date: t.Optional(t.Union([t.String(), t.Null()])),
+            before_ward: t.Optional(t.Union([t.String(), t.Null()])),
             ward: t.String(),
+            birth_date: t.Optional(t.Union([t.String(), t.Null()])),
             spclty: t.Optional(t.Union([t.String(), t.Null()])),
-            admission_type_id: t.Optional(t.Union([t.Number(), t.String(), t.Null()])),
-            status: t.Optional(t.Union([t.String(), t.Number(), t.Null()])),
-            serverity_level_id: t.Optional(t.Union([t.Number(), t.String(), t.Null()])),
-            severity_level_id: t.Optional(t.Union([t.Number(), t.String(), t.Null()])),
-            incharge_doctor: t.Optional(t.String()),
             gender: t.Optional(t.Union([t.String(), t.Null()])),
             bedno: t.Optional(t.Union([t.String(), t.Null()])),
-            is_ventilator: t.Optional(t.String()),
-            admission_change_shift_type_id: t.Optional(t.Union([t.Number(), t.String(), t.Null()])),
-            before_ward: t.Optional(t.Union([t.String(), t.Null()])),         // ✅ varchar(10)
-            oxygen_support_type: t.Optional(t.Union([t.Number(), t.Null()])), // ✅ tinyint(4)
+            admission_type_id: t.Optional(t.Union([t.Number(), t.Null()])),
+            status: t.Optional(t.Union([t.Number(), t.Null()])),
+            admission_change_shift_type_id: t.Optional(t.Union([t.Number(), t.Null()])),
+            incharge_doctor: t.Optional(t.String()),
+        })
+    })
+    .post('/update-patient', updatePatient, {
+        body: t.Object({
+            admission_list_id: t.Number(),
+            patient_name: t.String(),
+            reg_datetime: t.String(),
+            before_ward: t.Optional(t.Union([t.String(), t.Null()])),
+            ward: t.String(),
+            birth_date: t.Optional(t.Union([t.String(), t.Null()])),
+            spclty: t.Optional(t.Union([t.String(), t.Null()])),
+            bedno: t.Optional(t.Union([t.String(), t.Null()])),
+            admission_type_id: t.Optional(t.Union([t.Number(), t.Null()])),
+            status: t.Optional(t.Union([t.Number(), t.Null()])),
+            admission_change_shift_type_id: t.Optional(t.Union([t.Number(), t.Null()])),
+            incharge_doctor: t.Optional(t.String()),
         })
     })
     .post('/get-shift-assessment', getShiftAssessment, {
@@ -84,9 +103,9 @@ export const patientRoutes = new Elysia({ prefix: '/api/v1' })
             date_to: t.Optional(t.Union([t.String(), t.Null()])),
         })
     })
-    .post('/cancel-discharge', cancelDischarge, {
-        body: t.Object({
-            admission_list_id: t.Number(),
+    .get('/cancel-discharge/:admission_list_id', cancelDischarge, {
+        params: t.Object({
+            admission_list_id: t.String()
         })
     })
     .post('/discharge-patient', dischargePatient, {
@@ -95,7 +114,7 @@ export const patientRoutes = new Elysia({ prefix: '/api/v1' })
             discharge_type_id: t.Number(),
             discharge_datetime: t.String(),
             move_to_ward: t.Union([t.String(), t.Null()]),
-            status: t.String(),
+            status: t.Union([t.String(), t.Number()]),
             los: t.Number(),
         })
     })
