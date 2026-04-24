@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "Bash(bun add:*)",
-      "Bash(bun remove:*)"
+      "Bash(bun remove:*)",
+      "Bash(bun run *)"
+    ],
+    "additionalDirectories": [
+      "g:\\bunjs\\nurse"
     ]
   }
 }

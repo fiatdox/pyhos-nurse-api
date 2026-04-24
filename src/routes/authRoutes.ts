@@ -9,6 +9,7 @@ export const authRoutes = new Elysia({ prefix: '/api/v1' })
         secret: process.env.JWT_SECRET || 'your-secret-key',
         exp: '8h' // ปรับอายุ Token เป็น 8 ชั่วโมง
     }))
+    .guard({ detail: { tags: ['Auth'] } })
     .post('/login', login, {
         body: t.Object({
             username: t.String(),

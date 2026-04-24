@@ -1,4 +1,5 @@
 import { Elysia } from 'elysia';
+import { swagger } from '@elysiajs/swagger';
 import { rateLimit } from 'elysia-rate-limit';
 import { authRoutes } from './routes/authRoutes';
 import { protectedRoutes } from './routes/protectedRoutes';
@@ -7,6 +8,7 @@ import { nutritionRoutes } from './routes/nutritionRoutes';
 import { SystemRoutes } from './routes/systemRoutes'; //ข้อมูลพื้นฐาน เช่น หอผู้ป่วย
 import { nurseRoutes } from './routes/nurseRoutes';
 import { icRoutes } from './routes/icRoutes';
+import { nursingRecordRoutes } from './routes/nursingRecordRoutes';
 
 // Import middlewares
 import { securityMiddleware } from './middlewares/securityMiddleware';
@@ -21,7 +23,27 @@ const app = new Elysia()
         max: 50,        // จำกัดสูงสุด 50 requests ต่อ IP ภายในระยะเวลาที่กำหนด
         errorResponse: 'Rate limit exceeded. Please try again later.' // ข้อความเมื่อเกินลิมิต
     }))
-    .use(securityMiddleware) 
+    .use(securityMiddleware)
+    .use(swagger({
+        path: '/docs',
+        documentation: {
+            info: {
+                title: 'Nursing Record System API',
+                version: '1.0.50',
+                description: 'Hospital nursing record system API (intranet-only)'
+            },
+            components: {
+                securitySchemes: {
+                    bearerAuth: {
+                        type: 'http',
+                        scheme: 'bearer',
+                        bearerFormat: 'JWT'
+                    }
+                }
+            },
+            security: [{ bearerAuth: [] }]
+        }
+    }))
     
     .use(authRoutes) // เส้นทางสำหรับการเข้าสู่ระบบและการจัดการโทเค็น
     
@@ -32,6 +54,7 @@ const app = new Elysia()
     .use(SystemRoutes)
     .use(nurseRoutes)
     .use(icRoutes)
+    .use(nursingRecordRoutes)
     .listen(3000);
 
   

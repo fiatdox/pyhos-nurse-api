@@ -5,6 +5,7 @@ import { getStaffs, addStaff, updateStaff, deactivateStaff, activateStaff } from
 
 export const nurseRoutes = new Elysia({ prefix: '/api/v1/nurse' })
     .use(authMiddleware)
+    .guard({ detail: { tags: ['Nurse'] } })
     // Route สำหรับเพิ่มและอัพเดทตารางการทำงานของพยาบาล
     .post('/nurse-schedules', addNurseSchedule, {
         body: t.Array(t.Object({

@@ -4,6 +4,7 @@ import { getSpclty, getWards,getAdmissionType,getAdmissionSeverityLV,getAdmissio
 
 export const SystemRoutes = new Elysia({ prefix: '/api/v1' })
     .use(authMiddleware)
+    .guard({ detail: { tags: ['System'] } })
     // เพิ่มเส้นทางสำหรับดึงข้อมูลหอผู้ป่วย
     .get('/wards', getWards)
 

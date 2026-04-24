@@ -259,56 +259,64 @@ export const getFTEByWard = async ({ body, set }: { body: { ward: string, month:
 
     try {
         const [rows] = await nurse.execute<RowDataPacket[]>(
-            `SELECT DATE(acs.shift_date) AS shift_date,
-                acs.ward,
+            `WITH RECURSIVE dates AS (
+                SELECT DATE(CONCAT(?, '-01')) AS d
+                UNION ALL
+                SELECT d + INTERVAL 1 DAY FROM dates
+                WHERE d < LAST_DAY(DATE(CONCAT(?, '-01')))
+            )
+            SELECT
+                ds.d AS shift_date,
+                w.his_code AS ward,
                 st.admission_change_shift_type_id AS shift_id,
                 st.shift_name,
                 st.weight AS shift_weight,
-                SUM(CASE WHEN (acs.ventilator_use IN ('N') OR acs.ventilator_use IS NULL) AND acs.oxygen_support_type_id = 1 THEN 1 ELSE 0 END) AS normal_count,
-                SUM(CASE WHEN (acs.ventilator_use IN ('N') OR acs.ventilator_use IS NULL) AND acs.oxygen_support_type_id = 2 THEN 1 ELSE 0 END) AS o2_count,
-                SUM(CASE WHEN (acs.ventilator_use IN ('N') OR acs.ventilator_use IS NULL) AND acs.oxygen_support_type_id = 3 THEN 1 ELSE 0 END) AS hfnc_count,
-                SUM(CASE WHEN acs.ventilator_use IN ('N') OR acs.ventilator_use IS NULL THEN 1 ELSE 0 END) AS general_count,
-                SUM(CASE WHEN acs.ventilator_use IN ('Y','C') THEN 1 ELSE 0 END) AS crisis_count,
-                SUM(CASE WHEN acs.severity_level_id = 1 THEN 1 ELSE 0 END) AS severity_1,
-                SUM(CASE WHEN acs.severity_level_id = 2 THEN 1 ELSE 0 END) AS severity_2,
-                SUM(CASE WHEN acs.severity_level_id = 3 THEN 1 ELSE 0 END) AS severity_3,
-                SUM(CASE WHEN acs.severity_level_id = 4 THEN 1 ELSE 0 END) AS severity_4,
-                SUM(CASE WHEN acs.severity_level_id = 5 THEN 1 ELSE 0 END) AS severity_5,
-                COUNT(*) AS total_count,
+                COALESCE(SUM(CASE WHEN (acs.ventilator_use IN ('N') OR acs.ventilator_use IS NULL) AND acs.oxygen_support_type_id = 1 THEN 1 ELSE 0 END), 0) AS normal_count,
+                COALESCE(SUM(CASE WHEN (acs.ventilator_use IN ('N') OR acs.ventilator_use IS NULL) AND acs.oxygen_support_type_id = 2 THEN 1 ELSE 0 END), 0) AS o2_count,
+                COALESCE(SUM(CASE WHEN (acs.ventilator_use IN ('N') OR acs.ventilator_use IS NULL) AND acs.oxygen_support_type_id = 3 THEN 1 ELSE 0 END), 0) AS hfnc_count,
+                COALESCE(SUM(CASE WHEN acs.ventilator_use IN ('N') OR acs.ventilator_use IS NULL THEN 1 ELSE 0 END), 0) AS general_count,
+                COALESCE(SUM(CASE WHEN acs.ventilator_use IN ('Y','C') THEN 1 ELSE 0 END), 0) AS crisis_count,
+                COALESCE(SUM(CASE WHEN acs.severity_level_id = 1 THEN 1 ELSE 0 END), 0) AS severity_1,
+                COALESCE(SUM(CASE WHEN acs.severity_level_id = 2 THEN 1 ELSE 0 END), 0) AS severity_2,
+                COALESCE(SUM(CASE WHEN acs.severity_level_id = 3 THEN 1 ELSE 0 END), 0) AS severity_3,
+                COALESCE(SUM(CASE WHEN acs.severity_level_id = 4 THEN 1 ELSE 0 END), 0) AS severity_4,
+                COALESCE(SUM(CASE WHEN acs.severity_level_id = 5 THEN 1 ELSE 0 END), 0) AS severity_5,
+                COALESCE(COUNT(acs.admission_change_shift_id), 0) AS total_count,
                 w.general AS general_score,
                 w.crisis AS crisis_score,
                 ROUND(
                     (
-                        w.general * SUM(CASE WHEN acs.ventilator_use IN ('N') OR acs.ventilator_use IS NULL THEN 1 ELSE 0 END)
-                        + w.crisis * SUM(CASE WHEN acs.ventilator_use IN ('Y','C') THEN 1 ELSE 0 END)
+                        w.general * COALESCE(SUM(CASE WHEN acs.ventilator_use IN ('N') OR acs.ventilator_use IS NULL THEN 1 ELSE 0 END), 0)
+                        + w.crisis * COALESCE(SUM(CASE WHEN acs.ventilator_use IN ('Y','C') THEN 1 ELSE 0 END), 0)
                     ) * (st.weight / 100) / 7
                 , 2) AS fte,
-                w.his_code,
-                acs.admission_change_shift_type_id,
-                (SELECT COUNT(nsa.staff_id) FROM nurse_shift_assignments nsa LEFT JOIN staffs s ON s.staff_id=nsa.staff_id LEFT JOIN nurse_shift_types nst ON nst.nurse_shift_type_id=nsa.nurse_shift_type_id LEFT JOIN admission_change_shift_types acst ON acst.admission_change_shift_type_id=nst.admission_change_shift_type_id WHERE nsa.shift_date=acs.shift_date AND s.staff_position_id='1' AND nsa.ward=acs.ward AND acst.admission_change_shift_type_id=st.admission_change_shift_type_id AND nst.nurse_shift_type_id=(CASE WHEN st.admission_change_shift_type_id=1 THEN 7 WHEN st.admission_change_shift_type_id=2 THEN 4 WHEN st.admission_change_shift_type_id=3 THEN 1 END)) AS RN_NOT_OT,
-                (SELECT COUNT(nsa.staff_id) FROM nurse_shift_assignments nsa LEFT JOIN staffs s ON s.staff_id=nsa.staff_id LEFT JOIN nurse_shift_types nst ON nst.nurse_shift_type_id=nsa.nurse_shift_type_id LEFT JOIN admission_change_shift_types acst ON acst.admission_change_shift_type_id=nst.admission_change_shift_type_id WHERE nsa.shift_date=acs.shift_date AND s.staff_position_id='2' AND nsa.ward=acs.ward AND acst.admission_change_shift_type_id=st.admission_change_shift_type_id AND nst.nurse_shift_type_id=(CASE WHEN st.admission_change_shift_type_id=1 THEN 7 WHEN st.admission_change_shift_type_id=2 THEN 4 WHEN st.admission_change_shift_type_id=3 THEN 1 END)) AS TN_NOT_OT,
-                (SELECT COUNT(nsa.staff_id) FROM nurse_shift_assignments nsa LEFT JOIN staffs s ON s.staff_id=nsa.staff_id LEFT JOIN nurse_shift_types nst ON nst.nurse_shift_type_id=nsa.nurse_shift_type_id LEFT JOIN admission_change_shift_types acst ON acst.admission_change_shift_type_id=nst.admission_change_shift_type_id WHERE nsa.shift_date=acs.shift_date AND s.staff_position_id='3' AND nsa.ward=acs.ward AND acst.admission_change_shift_type_id=st.admission_change_shift_type_id AND nst.nurse_shift_type_id=(CASE WHEN st.admission_change_shift_type_id=1 THEN 7 WHEN st.admission_change_shift_type_id=2 THEN 4 WHEN st.admission_change_shift_type_id=3 THEN 1 END)) AS PN_NOT_OT,
-                (SELECT COUNT(nsa.staff_id) FROM nurse_shift_assignments nsa LEFT JOIN staffs s ON s.staff_id=nsa.staff_id LEFT JOIN nurse_shift_types nst ON nst.nurse_shift_type_id=nsa.nurse_shift_type_id LEFT JOIN admission_change_shift_types acst ON acst.admission_change_shift_type_id=nst.admission_change_shift_type_id WHERE nsa.shift_date=acs.shift_date AND s.staff_position_id='1' AND nsa.ward=acs.ward AND acst.admission_change_shift_type_id=st.admission_change_shift_type_id AND nst.nurse_shift_type_id=(CASE WHEN st.admission_change_shift_type_id=1 THEN 8 WHEN st.admission_change_shift_type_id=2 THEN 5 WHEN st.admission_change_shift_type_id=3 THEN 2 END)) AS RN_OT8,
-                (SELECT COUNT(nsa.staff_id) FROM nurse_shift_assignments nsa LEFT JOIN staffs s ON s.staff_id=nsa.staff_id LEFT JOIN nurse_shift_types nst ON nst.nurse_shift_type_id=nsa.nurse_shift_type_id LEFT JOIN admission_change_shift_types acst ON acst.admission_change_shift_type_id=nst.admission_change_shift_type_id WHERE nsa.shift_date=acs.shift_date AND s.staff_position_id='2' AND nsa.ward=acs.ward AND acst.admission_change_shift_type_id=st.admission_change_shift_type_id AND nst.nurse_shift_type_id=(CASE WHEN st.admission_change_shift_type_id=1 THEN 8 WHEN st.admission_change_shift_type_id=2 THEN 5 WHEN st.admission_change_shift_type_id=3 THEN 2 END)) AS TN_OT8,
-                (SELECT COUNT(nsa.staff_id) FROM nurse_shift_assignments nsa LEFT JOIN staffs s ON s.staff_id=nsa.staff_id LEFT JOIN nurse_shift_types nst ON nst.nurse_shift_type_id=nsa.nurse_shift_type_id LEFT JOIN admission_change_shift_types acst ON acst.admission_change_shift_type_id=nst.admission_change_shift_type_id WHERE nsa.shift_date=acs.shift_date AND s.staff_position_id='3' AND nsa.ward=acs.ward AND acst.admission_change_shift_type_id=st.admission_change_shift_type_id AND nst.nurse_shift_type_id=(CASE WHEN st.admission_change_shift_type_id=1 THEN 8 WHEN st.admission_change_shift_type_id=2 THEN 5 WHEN st.admission_change_shift_type_id=3 THEN 2 END)) AS PN_OT8,
-                (SELECT COUNT(nsa.staff_id) FROM nurse_shift_assignments nsa LEFT JOIN staffs s ON s.staff_id=nsa.staff_id LEFT JOIN nurse_shift_types nst ON nst.nurse_shift_type_id=nsa.nurse_shift_type_id LEFT JOIN admission_change_shift_types acst ON acst.admission_change_shift_type_id=nst.admission_change_shift_type_id WHERE nsa.shift_date=acs.shift_date AND s.staff_position_id='1' AND nsa.ward=acs.ward AND acst.admission_change_shift_type_id=st.admission_change_shift_type_id AND nst.nurse_shift_type_id=(CASE WHEN st.admission_change_shift_type_id=1 THEN 9 WHEN st.admission_change_shift_type_id=2 THEN 6 WHEN st.admission_change_shift_type_id=3 THEN 3 END)) AS RN_OT4,
-                (SELECT COUNT(nsa.staff_id) FROM nurse_shift_assignments nsa LEFT JOIN staffs s ON s.staff_id=nsa.staff_id LEFT JOIN nurse_shift_types nst ON nst.nurse_shift_type_id=nsa.nurse_shift_type_id LEFT JOIN admission_change_shift_types acst ON acst.admission_change_shift_type_id=nst.admission_change_shift_type_id WHERE nsa.shift_date=acs.shift_date AND s.staff_position_id='2' AND nsa.ward=acs.ward AND acst.admission_change_shift_type_id=st.admission_change_shift_type_id AND nst.nurse_shift_type_id=(CASE WHEN st.admission_change_shift_type_id=1 THEN 9 WHEN st.admission_change_shift_type_id=2 THEN 6 WHEN st.admission_change_shift_type_id=3 THEN 3 END)) AS TN_OT4,
-                (SELECT COUNT(nsa.staff_id) FROM nurse_shift_assignments nsa LEFT JOIN staffs s ON s.staff_id=nsa.staff_id LEFT JOIN nurse_shift_types nst ON nst.nurse_shift_type_id=nsa.nurse_shift_type_id LEFT JOIN admission_change_shift_types acst ON acst.admission_change_shift_type_id=nst.admission_change_shift_type_id WHERE nsa.shift_date=acs.shift_date AND s.staff_position_id='3' AND nsa.ward=acs.ward AND acst.admission_change_shift_type_id=st.admission_change_shift_type_id AND nst.nurse_shift_type_id=(CASE WHEN st.admission_change_shift_type_id=1 THEN 9 WHEN st.admission_change_shift_type_id=2 THEN 6 WHEN st.admission_change_shift_type_id=3 THEN 3 END)) AS PN_OT4
-            FROM admission_change_shift acs
-            LEFT JOIN admission_change_shift_types st ON st.admission_change_shift_type_id = acs.admission_change_shift_type_id
-            LEFT JOIN ward w ON w.his_code = acs.ward
-            WHERE DATE_FORMAT(acs.shift_date, '%Y-%m') = ?
-            AND acs.ward = ?
+                st.admission_change_shift_type_id,
+                (SELECT COUNT(nsa.staff_id) FROM nurse_shift_assignments nsa LEFT JOIN staffs s ON s.staff_id=nsa.staff_id LEFT JOIN nurse_shift_types nst ON nst.nurse_shift_type_id=nsa.nurse_shift_type_id LEFT JOIN admission_change_shift_types acst ON acst.admission_change_shift_type_id=nst.admission_change_shift_type_id WHERE nsa.shift_date=ds.d AND s.staff_position_id='1' AND nsa.ward=? AND acst.admission_change_shift_type_id=st.admission_change_shift_type_id AND nst.nurse_shift_type_id=(CASE WHEN st.admission_change_shift_type_id=1 THEN 7 WHEN st.admission_change_shift_type_id=2 THEN 4 WHEN st.admission_change_shift_type_id=3 THEN 1 END)) AS RN_NOT_OT,
+                (SELECT COUNT(nsa.staff_id) FROM nurse_shift_assignments nsa LEFT JOIN staffs s ON s.staff_id=nsa.staff_id LEFT JOIN nurse_shift_types nst ON nst.nurse_shift_type_id=nsa.nurse_shift_type_id LEFT JOIN admission_change_shift_types acst ON acst.admission_change_shift_type_id=nst.admission_change_shift_type_id WHERE nsa.shift_date=ds.d AND s.staff_position_id='2' AND nsa.ward=? AND acst.admission_change_shift_type_id=st.admission_change_shift_type_id AND nst.nurse_shift_type_id=(CASE WHEN st.admission_change_shift_type_id=1 THEN 7 WHEN st.admission_change_shift_type_id=2 THEN 4 WHEN st.admission_change_shift_type_id=3 THEN 1 END)) AS TN_NOT_OT,
+                (SELECT COUNT(nsa.staff_id) FROM nurse_shift_assignments nsa LEFT JOIN staffs s ON s.staff_id=nsa.staff_id LEFT JOIN nurse_shift_types nst ON nst.nurse_shift_type_id=nsa.nurse_shift_type_id LEFT JOIN admission_change_shift_types acst ON acst.admission_change_shift_type_id=nst.admission_change_shift_type_id WHERE nsa.shift_date=ds.d AND s.staff_position_id='3' AND nsa.ward=? AND acst.admission_change_shift_type_id=st.admission_change_shift_type_id AND nst.nurse_shift_type_id=(CASE WHEN st.admission_change_shift_type_id=1 THEN 7 WHEN st.admission_change_shift_type_id=2 THEN 4 WHEN st.admission_change_shift_type_id=3 THEN 1 END)) AS PN_NOT_OT,
+                (SELECT COUNT(nsa.staff_id) FROM nurse_shift_assignments nsa LEFT JOIN staffs s ON s.staff_id=nsa.staff_id LEFT JOIN nurse_shift_types nst ON nst.nurse_shift_type_id=nsa.nurse_shift_type_id LEFT JOIN admission_change_shift_types acst ON acst.admission_change_shift_type_id=nst.admission_change_shift_type_id WHERE nsa.shift_date=ds.d AND s.staff_position_id='1' AND nsa.ward=? AND acst.admission_change_shift_type_id=st.admission_change_shift_type_id AND nst.nurse_shift_type_id=(CASE WHEN st.admission_change_shift_type_id=1 THEN 8 WHEN st.admission_change_shift_type_id=2 THEN 5 WHEN st.admission_change_shift_type_id=3 THEN 2 END)) AS RN_OT8,
+                (SELECT COUNT(nsa.staff_id) FROM nurse_shift_assignments nsa LEFT JOIN staffs s ON s.staff_id=nsa.staff_id LEFT JOIN nurse_shift_types nst ON nst.nurse_shift_type_id=nsa.nurse_shift_type_id LEFT JOIN admission_change_shift_types acst ON acst.admission_change_shift_type_id=nst.admission_change_shift_type_id WHERE nsa.shift_date=ds.d AND s.staff_position_id='2' AND nsa.ward=? AND acst.admission_change_shift_type_id=st.admission_change_shift_type_id AND nst.nurse_shift_type_id=(CASE WHEN st.admission_change_shift_type_id=1 THEN 8 WHEN st.admission_change_shift_type_id=2 THEN 5 WHEN st.admission_change_shift_type_id=3 THEN 2 END)) AS TN_OT8,
+                (SELECT COUNT(nsa.staff_id) FROM nurse_shift_assignments nsa LEFT JOIN staffs s ON s.staff_id=nsa.staff_id LEFT JOIN nurse_shift_types nst ON nst.nurse_shift_type_id=nsa.nurse_shift_type_id LEFT JOIN admission_change_shift_types acst ON acst.admission_change_shift_type_id=nst.admission_change_shift_type_id WHERE nsa.shift_date=ds.d AND s.staff_position_id='3' AND nsa.ward=? AND acst.admission_change_shift_type_id=st.admission_change_shift_type_id AND nst.nurse_shift_type_id=(CASE WHEN st.admission_change_shift_type_id=1 THEN 8 WHEN st.admission_change_shift_type_id=2 THEN 5 WHEN st.admission_change_shift_type_id=3 THEN 2 END)) AS PN_OT8,
+                (SELECT COUNT(nsa.staff_id) FROM nurse_shift_assignments nsa LEFT JOIN staffs s ON s.staff_id=nsa.staff_id LEFT JOIN nurse_shift_types nst ON nst.nurse_shift_type_id=nsa.nurse_shift_type_id LEFT JOIN admission_change_shift_types acst ON acst.admission_change_shift_type_id=nst.admission_change_shift_type_id WHERE nsa.shift_date=ds.d AND s.staff_position_id='1' AND nsa.ward=? AND acst.admission_change_shift_type_id=st.admission_change_shift_type_id AND nst.nurse_shift_type_id=(CASE WHEN st.admission_change_shift_type_id=1 THEN 9 WHEN st.admission_change_shift_type_id=2 THEN 6 WHEN st.admission_change_shift_type_id=3 THEN 3 END)) AS RN_OT4,
+                (SELECT COUNT(nsa.staff_id) FROM nurse_shift_assignments nsa LEFT JOIN staffs s ON s.staff_id=nsa.staff_id LEFT JOIN nurse_shift_types nst ON nst.nurse_shift_type_id=nsa.nurse_shift_type_id LEFT JOIN admission_change_shift_types acst ON acst.admission_change_shift_type_id=nst.admission_change_shift_type_id WHERE nsa.shift_date=ds.d AND s.staff_position_id='2' AND nsa.ward=? AND acst.admission_change_shift_type_id=st.admission_change_shift_type_id AND nst.nurse_shift_type_id=(CASE WHEN st.admission_change_shift_type_id=1 THEN 9 WHEN st.admission_change_shift_type_id=2 THEN 6 WHEN st.admission_change_shift_type_id=3 THEN 3 END)) AS TN_OT4,
+                (SELECT COUNT(nsa.staff_id) FROM nurse_shift_assignments nsa LEFT JOIN staffs s ON s.staff_id=nsa.staff_id LEFT JOIN nurse_shift_types nst ON nst.nurse_shift_type_id=nsa.nurse_shift_type_id LEFT JOIN admission_change_shift_types acst ON acst.admission_change_shift_type_id=nst.admission_change_shift_type_id WHERE nsa.shift_date=ds.d AND s.staff_position_id='3' AND nsa.ward=? AND acst.admission_change_shift_type_id=st.admission_change_shift_type_id AND nst.nurse_shift_type_id=(CASE WHEN st.admission_change_shift_type_id=1 THEN 9 WHEN st.admission_change_shift_type_id=2 THEN 6 WHEN st.admission_change_shift_type_id=3 THEN 3 END)) AS PN_OT4
+            FROM dates ds
+            CROSS JOIN admission_change_shift_types st
+            LEFT JOIN ward w ON w.his_code = ?
+            LEFT JOIN admission_change_shift acs
+                ON DATE(acs.shift_date) = ds.d
+                AND acs.ward = ?
+                AND acs.admission_change_shift_type_id = st.admission_change_shift_type_id
             GROUP BY
-                DATE(acs.shift_date),
-                acs.ward,
+                ds.d,
                 st.admission_change_shift_type_id,
                 st.shift_name,
                 st.weight,
+                w.his_code,
                 w.general,
                 w.crisis
-            ORDER BY DATE(acs.shift_date) ASC, st.admission_change_shift_type_id ASC`,
-            [month, ward]
+            ORDER BY ds.d ASC, st.admission_change_shift_type_id ASC`,
+            [month, month, ward, ward, ward, ward, ward, ward, ward, ward, ward, ward, ward]
         );
 
         return {

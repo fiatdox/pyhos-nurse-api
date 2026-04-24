@@ -4,6 +4,7 @@ import { getMeals, getNutritionMenu, orderMenu, cancelOrderMenu, getFoodOrdersBy
 
 export const nutritionRoutes = new Elysia({ prefix: '/api/v1' })
     .use(authMiddleware)
+    .guard({ detail: { tags: ['Nutrition'] } })
     .get('/nutrition-menu', getNutritionMenu)
     .get('/meals', getMeals)
     .post('/order-menu', orderMenu, {

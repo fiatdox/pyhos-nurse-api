@@ -4,6 +4,7 @@ import { getPatientsByWard, getPatientsBYAN, registerPatient, updatePatient, sav
 
 export const patientRoutes = new Elysia({ prefix: '/api/v1' })
     .use(authMiddleware)
+    .guard({ detail: { tags: ['Patient'] } })
     .post('/patients-list-by-ward', getPatientsByWard, {
         body: t.Object({
             ward: t.String()

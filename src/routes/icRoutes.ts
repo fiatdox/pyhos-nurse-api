@@ -4,6 +4,7 @@ import { getIpdPatientHistoryDaily, getOpdPatientHistoryDaily, getResultInFiscal
 
 export const icRoutes = new Elysia({ prefix: '/api/v1/ic' })
     .use(authMiddleware)
+    .guard({ detail: { tags: ['IC (Infection Control)'] } })
     .get('/ipd-patient-history-daily', getIpdPatientHistoryDaily)
     .get('/opd-patient-history-daily', getOpdPatientHistoryDaily)
     .get('/result-in-fiscal-year', getResultInFiscalYear)
